@@ -105,7 +105,6 @@ PROGRAM tree
             END DO
             PRINT*, "-----------------------------------"
             PRINT*, ""
-            FLUSH(UNIT=6)
             t_out = 0.0_dp
         END IF
     END DO

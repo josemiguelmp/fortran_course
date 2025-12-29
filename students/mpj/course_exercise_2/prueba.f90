@@ -13,18 +13,6 @@ PROGRAM tree
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     TYPE(vector3d) :: rji
 
-    CHARACTER(LEN=20) :: filename
-    INTEGER :: unit, ios
-
-    filename = "output.dat"
-    unit = 10
-    OPEN(unit, FILE=filename, STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
-    IF (ios /= 0) THEN
-        PRINT*, "Error al abrir el archivo"
-        STOP
-    END IF
-
-
     TYPE RANGE
         TYPE(point3d) :: min,max
     END TYPE RANGE
@@ -44,6 +32,10 @@ PROGRAM tree
     END TYPE CELL
 
     TYPE (CELL), POINTER :: head, temp_cell
+
+    ! Nuevas variables para salida
+    INTEGER :: ios
+    INTEGER :: unit_out
 
     !! Lectura de datos
     READ*, dt
@@ -78,17 +70,24 @@ PROGRAM tree
     a = vector3d(0.0_dp,0.0_dp,0.0_dp)
     CALL Calculate_forces(head)
 
+    ! Apertura del archivo de salida
+    OPEN(UNIT=10, FILE='output.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
+    IF (ios /= 0) THEN
+        PRINT*, 'Error abriendo output.dat'
+        STOP
+    END IF
+
     !! Bucle principal
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
+        ! Actualización de velocidades y posiciones (Verlet)
         DO i=1,n
             p(i)%v = p(i)%v + a(i) * (dt/2)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO
 
-        !! Las posiciones han cambiado, por lo que tenemos que borrar
-        !! y reinicializar el arbol
+        ! Reconstrucción del árbol
         CALL Borrar_tree(head)
         CALL Calculate_ranges(head)
         head%type = 0
@@ -102,25 +101,29 @@ PROGRAM tree
         CALL Borrar_empty_leaves(head)
         CALL Calculate_masses(head)
 
+        ! Cálculo de aceleraciones
         a = vector3d(0.0_dp,0.0_dp,0.0_dp)
         CALL Calculate_forces(head)
 
+        ! Actualización final de velocidades
         DO i=1,n
             p(i)%v = p(i)%v + a(i) * (dt/2)
         END DO
 
         t_out = t_out + dt
 
-        ! Escritura en archivo en lugar de imprimir en pantalla
+        ! Escritura de los datos al archivo
         IF (t_out >= dt_out) THEN
-            WRITE(unit,'(F8.3,1X)', ADVANCE='NO') t
-            DO i = 1, n
-                WRITE(unit,'(3F12.6)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
+            WRITE(10,'(F12.5,1X)', ADVANCE='NO') t
+            DO i=1,n
+                WRITE(10,'(F12.5,1X,F12.5,1X,F12.5,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
-            WRITE(unit,*)  ! salto de línea
-            t_out = 0.0_dp
+            WRITE(10,*)  ! Salto de línea
         END IF
     END DO
+
+    CLOSE(10)
+
 
 
     CONTAINS
@@ -520,7 +523,5 @@ PROGRAM tree
             END IF
         END SELECT
     END SUBROUTINE Calculate_forces_aux
-
-    close(unit)
 
 END PROGRAM tree

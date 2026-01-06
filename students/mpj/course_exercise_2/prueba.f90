@@ -8,6 +8,7 @@ PROGRAM tree
     INTEGER :: i,j,k,n
     REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
     REAL(dp), PARAMETER :: theta = 1.0_dp
+    real(dp), parameter :: epsilon = 0.001_dp
 
     TYPE(particle3d), DIMENSION(:), ALLOCATABLE :: p
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
@@ -224,6 +225,13 @@ PROGRAM tree
             goal%part = part
             goal%pos = n
         CASE (1)
+            ! Si las partículas están virtualmente en el mismo sitio, no subdividas más
+            IF (ABS(goal%part%x - part%x) < epsilon .AND. &
+                ABS(goal%part%y - part%y) < epsilon .AND. &
+                ABS(goal%part%z - part%z) < epsilon) THEN
+                RETURN
+            END IF
+
             CALL Crear_Subcells(goal)
             CALL Find_Cell(goal,temp,part)
             CALL Place_Cell(temp,part,n)
@@ -335,27 +343,25 @@ PROGRAM tree
         INTEGER, INTENT(IN) :: what
         TYPE(CELL), POINTER :: goal
         INTEGER, DIMENSION(3), INTENT(IN) :: octant
-        TYPE(point3d) :: Calcular_Range, valor_medio
+        TYPE(point3d) :: Calcular_Range, mid
 
-        valor_medio%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
-        valor_medio%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
-        valor_medio%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
+        mid%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
+        mid%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
+        mid%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
 
         SELECT CASE (what)
-        CASE (0)
-            IF (all(octant == 1)) THEN
-                Calcular_Range = goal%range%min
-            ELSE
-                Calcular_Range = valor_medio
-            END IF
-        CASE (1)
-            IF (all(octant == 1)) THEN
-                Calcular_Range = valor_medio
-            ELSE
-                Calcular_Range = goal%range%max
-            END IF
+        CASE (0)   ! min
+            Calcular_Range%x = MERGE(goal%range%min%x, mid%x, octant(1)==1)
+            Calcular_Range%y = MERGE(goal%range%min%y, mid%y, octant(2)==1)
+            Calcular_Range%z = MERGE(goal%range%min%z, mid%z, octant(3)==1)
+
+        CASE (1)   ! max
+            Calcular_Range%x = MERGE(mid%x, goal%range%max%x, octant(1)==1)
+            Calcular_Range%y = MERGE(mid%y, goal%range%max%y, octant(2)==1)
+            Calcular_Range%z = MERGE(mid%z, goal%range%max%z, octant(3)==1)
         END SELECT
     END FUNCTION Calcular_Range
+
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !! Borrar_empty_leaves !!
@@ -497,14 +503,14 @@ PROGRAM tree
                 goal_particle%p%z /= p(tree%pos)%p%z) THEN
 
                 rji = tree%c_o_m - goal_particle%p
-                r2 = rji%x**2 + rji%y**2 + rji%z**2
+                r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
                 r3 = r2 * SQRT(r2)
                 goal_particle%v = goal_particle%v + (tree%mass * rji) / r3
             END IF
         CASE(2)
             l = tree%range%max%x - tree%range%min%x
             rji = tree%c_o_m - goal_particle%p
-            r2 = rji%x**2 + rji%y**2 + rji%z**2
+            r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
             D = SQRT(r2)
 
             IF (l/D < theta) THEN

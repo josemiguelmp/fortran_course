@@ -8,7 +8,7 @@ PROGRAM tree
     INTEGER :: i,j,k,n
     REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
     REAL(dp), PARAMETER :: theta = 1.0_dp
-    real(dp), parameter :: epsilon = 0.001_dp
+    real(dp), parameter :: epsilon = 0.2_dp
 
     TYPE(particle3d), DIMENSION(:), ALLOCATABLE :: p
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
@@ -82,9 +82,9 @@ PROGRAM tree
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
-        ! Actualización de velocidades y posiciones (Verlet)
-        DO i=1,n
-            p(i)%v = p(i)%v + a(i) * (dt/2)
+        ! Actualización de velocidades y posiciones
+        DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
+            p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO
 
@@ -115,11 +115,14 @@ PROGRAM tree
 
         ! Escritura de los datos al archivo
         IF (t_out >= dt_out) THEN
-            WRITE(10,'(F12.5,1X)', ADVANCE='NO') t
+            WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
+
+            ! Escribir posiciones de todas las partículas
             DO i=1,n
-                WRITE(10,'(F12.5,1X,F12.5,1X,F12.5,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
+                WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
-            WRITE(10,*)  ! Salto de línea
+            WRITE(10,*)
+
         END IF
     END DO
 
@@ -462,12 +465,13 @@ PROGRAM tree
     !! que en realidad hace los calculos para cada particula
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Calculate_forces(head)
-        TYPE(CELL), POINTER :: head
-        INTEGER :: i
+    TYPE(CELL), POINTER :: head
+    INTEGER :: i
 
-        DO i=1, size(p)
-            CALL Calculate_forces_aux(p(i), head)
-        END DO
+    DO i=1, n  ! Usa n, que es el número de partículas
+        ! Pasamos la partícula y su índice para actualizar a(i)
+        CALL Calculate_forces_aux(p(i), a(i), head)
+    END DO
     END SUBROUTINE Calculate_forces
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -489,8 +493,9 @@ PROGRAM tree
     !! de tree y para cada una de ellas llamar recursivamente
     !! a Calculate_forces_aux
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, tree)
-        TYPE(particle3d), INTENT(INOUT) :: goal_particle
+    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, goal_accel, tree)
+        TYPE(particle3d), INTENT(IN) :: goal_particle
+        TYPE(vector3d), INTENT(INOUT) :: goal_accel
         TYPE(CELL), POINTER :: tree
         INTEGER :: i,j,k
         TYPE(vector3d) :: rji
@@ -498,15 +503,20 @@ PROGRAM tree
 
         SELECT CASE(tree%type)
         CASE(1)
-            IF (goal_particle%p%x /= p(tree%pos)%p%x .OR. &
-                goal_particle%p%y /= p(tree%pos)%p%y .OR. &
-                goal_particle%p%z /= p(tree%pos)%p%z) THEN
+            ! Verificamos que no sea la misma partícula por posición
+            IF (ABS(goal_particle%p%x - tree%c_o_m%x) > 1.e-10_dp .OR. &
+                ABS(goal_particle%p%y - tree%c_o_m%y) > 1.e-10_dp .OR. &
+                ABS(goal_particle%p%z - tree%c_o_m%z) > 1.e-10_dp) THEN
 
                 rji = tree%c_o_m - goal_particle%p
                 r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
                 r3 = r2 * SQRT(r2)
-                goal_particle%v = goal_particle%v + (tree%mass * rji) / r3
+                ! AHORA SUMA A LA ACELERACIÓN
+                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
+                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
+                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
             END IF
+
         CASE(2)
             l = tree%range%max%x - tree%range%min%x
             rji = tree%c_o_m - goal_particle%p
@@ -515,13 +525,15 @@ PROGRAM tree
 
             IF (l/D < theta) THEN
                 r3 = r2 * D
-                goal_particle%v = goal_particle%v + (tree%mass * rji)/r3
+                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
+                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
+                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
             ELSE
                 DO i=1,2
                     DO j=1,2
                         DO k=1,2
                             IF (ASSOCIATED(tree%subcell(i,j,k)%ptr)) THEN
-                                CALL Calculate_forces_aux(goal_particle, tree%subcell(i,j,k)%ptr)
+                                CALL Calculate_forces_aux(goal_particle, goal_accel, tree%subcell(i,j,k)%ptr)
                             END IF
                         END DO
                     END DO

@@ -2,30 +2,28 @@
 ! El siguiente código se puede usar para generar una “nube” de cuerpos en una esfera de radio 1, sin velocidades. Estos
 ! valores se pueden poner en un fichero para usar como entrada al programa (primero añadiendo el dt, dt im, etc., ver sección 2.2)
 PROGRAM particulas
-    use geometry
-    use particle
     IMPLICIT NONE
+
+    INTEGER, PARAMETER :: dp = SELECTED_REAL_KIND(p=15, r=307) ! Defining our desired precision (64 bits)
 
     INTEGER :: I, N
     INTEGER :: values(1:8), k
     INTEGER, DIMENSION(:), ALLOCATABLE :: seed
-    REAL(dp) :: mass, rx, ry, rz
+    REAL(dp) :: mass, rx, ry, rz, vx, vy, vz
     REAL(dp) :: dt, dt_out, t_end
 
     dt = 0.001
     dt_out = 0.01
     t_end = 1
+    N = 133          ! Number of particles
+    mass = 1.0_dp / REAL(N, dp)
 
     CALL date_and_time(values=values)
     CALL random_seed(size=k)
     ALLOCATE(seed(1:k))
     seed(:) = values(8)
     CALL random_seed(put=seed)
-
-    PRINT*, "Number of bodies?"
-    READ*, N
-
-    mass = 1.0_dp / REAL(N, dp)
+    
 
     ! Abrir archivo de salida
     OPEN(unit=10, file="input.txt", status="replace", action="write")

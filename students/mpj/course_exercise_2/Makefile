@@ -1,8 +1,8 @@
 # =========================
 # Compilador y flags
 # =========================
-FC = gfortran
-FFLAGS = -O2 -Wall -fimplicit-none
+FC = mpif90
+FFLAGS = -O3 -Wall -fimplicit-none
 
 # =========================
 # Módulos
@@ -13,14 +13,14 @@ MOD_OBJ = $(MODULES:.f90=.o)
 # =========================
 # Programas
 # =========================
-INPUT_SRC = input.f90
-TREE_SRC  = tree_p.f90
+INPUT_SRC = input_rotation.f90
+TREE_SRC  = tree_openMPI.f90
 
 INPUT_OBJ = $(INPUT_SRC:.f90=.o)
 TREE_OBJ  = $(TREE_SRC:.f90=.o)
 
-INPUT_EXE = input.exe
-TREE_EXE  = tree_p.exe
+INPUT_EXE = input_rotation
+TREE_EXE  = tree_openMPI
 
 # =========================
 # Regla por defecto
@@ -43,14 +43,14 @@ $(TREE_EXE): $(MOD_OBJ) $(TREE_OBJ)
 	$(FC) $(FFLAGS) -c $<
 
 # =========================
-# Flujo completo
+# Ejecución
 # =========================
 run: $(INPUT_EXE) $(TREE_EXE)
 	./$(INPUT_EXE)
-	./$(TREE_EXE)
+	mpirun -np 4 ./$(TREE_EXE) < input_rotation.dat
 
 # =========================
 # Limpieza
 # =========================
 clean:
-	rm -f *.o *.mod $(INPUT_EXE) $(TREE_EXE) input.txt output.dat
+	rm -f *.o *.mod $(INPUT_EXE) $(TREE_EXE) input_rotation.dat

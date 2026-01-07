@@ -8,7 +8,7 @@ PROGRAM galaxia_bh
   REAL(kind=bit64) :: dt, dt_out, t_end
 
   ! 1. Configuración idéntica a tu READ
-  n = 176
+  n = 576
   dt = 0.002_bit64
   dt_out = 0.1_bit64
   t_end = 1.0_bit64

@@ -1,17 +1,24 @@
 ! Algoritmo Barnes-Hut en Fortran90
 ! 5.2 Codigo serie para problema N-body con algoritmo Barnes-Hut
-PROGRAM tree
+PROGRAM tree_omp
     use geometry
     use particle
+    use omp_lib
     IMPLICIT NONE
 
     INTEGER :: i,j,k,n
     REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
     REAL(dp), PARAMETER :: theta = 1.0_dp
+    real(dp), parameter :: epsilon = 0.2_dp
 
     TYPE(particle3d), DIMENSION(:), ALLOCATABLE :: p
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     TYPE(vector3d) :: rji
+
+    ! Time control variables:
+    integer(kind=8)  :: c_ini, c_fin, c_rate
+    real(dp) :: t_tree, t_forces, t_update, t_total
+    INTEGER :: nt = 1
 
     TYPE RANGE
         TYPE(point3d) :: min,max
@@ -32,6 +39,10 @@ PROGRAM tree
     END TYPE CELL
 
     TYPE (CELL), POINTER :: head, temp_cell
+
+    ! Nuevas variables para salida
+    INTEGER :: ios
+    INTEGER :: unit_out
 
     !! Lectura de datos
     READ*, dt
@@ -63,20 +74,45 @@ PROGRAM tree
     CALL Calculate_masses(head)
 
     !! Aceleraciones iniciales
-    a = vector3d(0.0_dp,0.0_dp,0.0_dp)
+    !$OMP PARALLEL DO DEFAULT(shared) PRIVATE(i)
+    DO i=1,n
+        a(i) = vector3d(0.0_dp,0.0_dp,0.0_dp)
+    END DO
+    !$OMP END PARALLEL DO
+
     CALL Calculate_forces(head)
+
+    ! Initialization of the time variables
+    t_tree   = 0.0_dp
+    t_forces = 0.0_dp
+    t_update = 0.0_dp
+
+    call system_clock(count_rate = c_rate)
+    call system_clock(count = c_ini)
+
+
+    ! Apertura del archivo de salida
+    OPEN(UNIT=10, FILE='output_openmp.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
+    IF (ios /= 0) THEN
+        PRINT*, 'Error abriendo output_openmp.dat'
+        STOP
+    END IF
 
     !! Bucle principal
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
+        call system_clock(count = c_ini)
+
+        ! Actualización de velocidades y posiciones
+        !$OMP PARALLEL DO PRIVATE(i)
         DO i=1,n
-            p(i)%v = p(i)%v + a(i) * (dt/2)
+            p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO
+        !$OMP END PARALLEL DO
 
-        !! Las posiciones han cambiado, por lo que tenemos que borrar
-        !! y reinicializar el arbol
+        ! Reconstrucción del árbol
         CALL Borrar_tree(head)
         CALL Calculate_ranges(head)
         head%type = 0
@@ -90,24 +126,83 @@ PROGRAM tree
         CALL Borrar_empty_leaves(head)
         CALL Calculate_masses(head)
 
-        a = vector3d(0.0_dp,0.0_dp,0.0_dp)
+        call system_clock(count=c_fin) ! Clock stop
+        t_tree = t_tree + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini) ! Clock initialization
+
+        ! Cálculo de aceleraciones
+        !$omp parallel do private(i)
+        DO i = 1,n
+            a(i) = vector3d(0.0_dp, 0.0_dp, 0.0_dp)
+        END DO
+        !$omp end parallel do
         CALL Calculate_forces(head)
 
+        call system_clock(count=c_fin) ! Clock stop
+        t_forces = t_forces + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini) ! Clock initialization
+
+        ! Actualización final de velocidades
+        !$OMP PARALLEL DO PRIVATE(i)
         DO i=1,n
-            p(i)%v = p(i)%v + a(i) * (dt/2)
+            p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
         END DO
+        !$OMP END PARALLEL DO
+
 
         t_out = t_out + dt
 
+        ! Escritura de los datos al archivo
         IF (t_out >= dt_out) THEN
-            DO i = 1,MIN(10,n)
-                PRINT*, t, p(i)%p%x, p(i)%p%y, p(i)%p%z
+            WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
+
+            ! Escribir posiciones de todas las partículas
+            ! Esta forma mantiene el orden x1, y1, z1, x2, y2, z2...
+            DO i=1,n
+                WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
-            PRINT*, "-----------------------------------"
-            PRINT*, ""
-            t_out = 0.0_dp
+            WRITE(10,*)
+            t_out=0.0_dp
         END IF
+
+        call system_clock(count=c_fin) ! Clock stop
+        t_update = t_update + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
     END DO
+
+    CLOSE(10)
+
+    t_total = t_tree + t_forces + t_update
+
+    ! Print time info
+    print*
+    print '(A)', "  ===================================================="
+    
+    ! Centramos el título del modo manualmente
+    print '(A)', "          ANALYSIS OF EXECUTION - Mode: OpenMP"
+    
+    !$ nt = omp_get_max_threads()
+    !$ print '(A, I2)', "           Processing threads active: ", nt
+
+    print '(A)', "  ===================================================="
+    print '(A, F10.3, A)', "   Total execution time: ", t_total, " s"
+    print '(A)', "  ----------------------------------------------------"
+    
+    ! Desglose de las fases
+    print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:     ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:      ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Integration and output:    ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
+    print '(A)', "  ____________________________________________________"
+    
+    ! Mantenemos solo el Throughput como dato de interés científico
+    if (t_total > 0) then
+        print '(A, F12.2, A)', "   Throughput: ", (n / t_total), " particles/s"
+    end if
+    print '(A)', "  ===================================================="
+    print*
+
 
 
     CONTAINS
@@ -208,6 +303,13 @@ PROGRAM tree
             goal%part = part
             goal%pos = n
         CASE (1)
+            ! Si las partículas están virtualmente en el mismo sitio, no subdividas más
+            IF (ABS(goal%part%x - part%x) < epsilon .AND. &
+                ABS(goal%part%y - part%y) < epsilon .AND. &
+                ABS(goal%part%z - part%z) < epsilon) THEN
+                RETURN
+            END IF
+
             CALL Crear_Subcells(goal)
             CALL Find_Cell(goal,temp,part)
             CALL Place_Cell(temp,part,n)
@@ -319,27 +421,25 @@ PROGRAM tree
         INTEGER, INTENT(IN) :: what
         TYPE(CELL), POINTER :: goal
         INTEGER, DIMENSION(3), INTENT(IN) :: octant
-        TYPE(point3d) :: Calcular_Range, valor_medio
+        TYPE(point3d) :: Calcular_Range, mid
 
-        valor_medio%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
-        valor_medio%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
-        valor_medio%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
+        mid%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
+        mid%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
+        mid%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
 
         SELECT CASE (what)
-        CASE (0)
-            IF (all(octant == 1)) THEN
-                Calcular_Range = goal%range%min
-            ELSE
-                Calcular_Range = valor_medio
-            END IF
-        CASE (1)
-            IF (all(octant == 1)) THEN
-                Calcular_Range = valor_medio
-            ELSE
-                Calcular_Range = goal%range%max
-            END IF
+        CASE (0)   ! min
+            Calcular_Range%x = MERGE(goal%range%min%x, mid%x, octant(1)==1)
+            Calcular_Range%y = MERGE(goal%range%min%y, mid%y, octant(2)==1)
+            Calcular_Range%z = MERGE(goal%range%min%z, mid%z, octant(3)==1)
+
+        CASE (1)   ! max
+            Calcular_Range%x = MERGE(mid%x, goal%range%max%x, octant(1)==1)
+            Calcular_Range%y = MERGE(mid%y, goal%range%max%y, octant(2)==1)
+            Calcular_Range%z = MERGE(mid%z, goal%range%max%z, octant(3)==1)
         END SELECT
     END FUNCTION Calcular_Range
+
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !! Borrar_empty_leaves !!
@@ -443,10 +543,14 @@ PROGRAM tree
         TYPE(CELL), POINTER :: head
         INTEGER :: i
 
-        DO i=1, size(p)
-            CALL Calculate_forces_aux(p(i), head)
+        !$OMP PARALLEL DO DEFAULT(shared) PRIVATE(i) SCHEDULE(dynamic)
+        DO i=1, n
+            CALL Calculate_forces_aux(p(i), a(i), head)
         END DO
+        !$OMP END PARALLEL DO
+
     END SUBROUTINE Calculate_forces
+
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !! Calculate_forces_aux !!
@@ -467,8 +571,9 @@ PROGRAM tree
     !! de tree y para cada una de ellas llamar recursivamente
     !! a Calculate_forces_aux
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, tree)
-        TYPE(particle3d), INTENT(INOUT) :: goal_particle
+    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, goal_accel, tree)
+        TYPE(particle3d), INTENT(IN) :: goal_particle
+        TYPE(vector3d), INTENT(INOUT) :: goal_accel
         TYPE(CELL), POINTER :: tree
         INTEGER :: i,j,k
         TYPE(vector3d) :: rji
@@ -476,30 +581,37 @@ PROGRAM tree
 
         SELECT CASE(tree%type)
         CASE(1)
-            IF (goal_particle%p%x /= p(tree%pos)%p%x .OR. &
-                goal_particle%p%y /= p(tree%pos)%p%y .OR. &
-                goal_particle%p%z /= p(tree%pos)%p%z) THEN
+            ! Verificamos que no sea la misma partícula por posición
+            IF (ABS(goal_particle%p%x - tree%c_o_m%x) > 1.e-10_dp .OR. &
+                ABS(goal_particle%p%y - tree%c_o_m%y) > 1.e-10_dp .OR. &
+                ABS(goal_particle%p%z - tree%c_o_m%z) > 1.e-10_dp) THEN
 
                 rji = tree%c_o_m - goal_particle%p
-                r2 = rji%x**2 + rji%y**2 + rji%z**2
+                r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
                 r3 = r2 * SQRT(r2)
-                goal_particle%v = goal_particle%v + (tree%mass * rji) / r3
+                ! AHORA SUMA A LA ACELERACIÓN
+                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
+                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
+                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
             END IF
+
         CASE(2)
             l = tree%range%max%x - tree%range%min%x
             rji = tree%c_o_m - goal_particle%p
-            r2 = rji%x**2 + rji%y**2 + rji%z**2
+            r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
             D = SQRT(r2)
 
             IF (l/D < theta) THEN
                 r3 = r2 * D
-                goal_particle%v = goal_particle%v + (tree%mass * rji)/r3
+                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
+                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
+                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
             ELSE
                 DO i=1,2
                     DO j=1,2
                         DO k=1,2
                             IF (ASSOCIATED(tree%subcell(i,j,k)%ptr)) THEN
-                                CALL Calculate_forces_aux(goal_particle, tree%subcell(i,j,k)%ptr)
+                                CALL Calculate_forces_aux(goal_particle, goal_accel, tree%subcell(i,j,k)%ptr)
                             END IF
                         END DO
                     END DO
@@ -508,4 +620,4 @@ PROGRAM tree
         END SELECT
     END SUBROUTINE Calculate_forces_aux
 
-END PROGRAM tree
+END PROGRAM tree_omp

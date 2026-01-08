@@ -5,8 +5,8 @@ from matplotlib.animation import FuncAnimation
 # ==========================
 # Parámetros
 # ==========================
-filename = "C:/Users/uSer/Documents/Máster Astrofísica/Segundo curso/Programación/fortran_course/students/mpj/course_exercise_2/output.dat"
-gif_name = "C:/Users/uSer/Documents/Máster Astrofísica/Segundo curso/Programación/fortran_course/students/mpj/course_exercise_2/animations/rotation.gif"
+filename = "/home/josemiguelmp/fortran_course/students/mpj/course_exercise_2/output_mpi.dat"
+gif_name = "/home/josemiguelmp/fortran_course/students/mpj/course_exercise_2/animations/rotation_mpi.gif"
 limit = 8       # Zoom de la cámara
 skip = 2        # Dibuja uno de cada dos frames
 

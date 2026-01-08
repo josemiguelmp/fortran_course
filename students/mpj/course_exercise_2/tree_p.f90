@@ -14,6 +14,10 @@ PROGRAM tree
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     TYPE(vector3d) :: rji
 
+    character(len=20) :: mode_name = "SERIAL"
+    integer(kind=8)  :: c_ini, c_fin, c_rate
+    real(dp) :: t_tree, t_forces, t_update, t_total
+
     TYPE RANGE
         TYPE(point3d) :: min,max
     END TYPE RANGE
@@ -71,6 +75,12 @@ PROGRAM tree
     a = vector3d(0.0_dp,0.0_dp,0.0_dp)
     CALL Calculate_forces(head)
 
+    t_tree   = 0.0_dp
+    t_forces = 0.0_dp
+    t_update = 0.0_dp
+
+    call system_clock(count_rate = c_rate)
+
     ! Apertura del archivo de salida
     OPEN(UNIT=10, FILE='output.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
     IF (ios /= 0) THEN
@@ -82,6 +92,8 @@ PROGRAM tree
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
+        call system_clock(count = c_ini) ! INICIO MEDICIÓN TREE + POSICIONES
+
         ! Actualización de velocidades y posiciones
         DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
@@ -102,9 +114,19 @@ PROGRAM tree
         CALL Borrar_empty_leaves(head)
         CALL Calculate_masses(head)
 
+        call system_clock(count=c_fin) 
+        t_tree = t_tree + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini) ! INICIO MEDICIÓN FORCES
+
         ! Cálculo de aceleraciones
         a = vector3d(0.0_dp,0.0_dp,0.0_dp)
         CALL Calculate_forces(head)
+
+        call system_clock(count=c_fin)
+        t_forces = t_forces + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini) ! INICIO MEDICIÓN UPDATE/IO
 
         ! Actualización final de velocidades
         DO i=1,n
@@ -122,11 +144,39 @@ PROGRAM tree
                 WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
             WRITE(10,*)
-
+            t_out=0.0_dp
         END IF
+
+        call system_clock(count=c_fin)
+        t_update = t_update + real(c_fin - c_ini, dp) / real(c_rate, dp)
     END DO
 
     CLOSE(10)
+
+    t_total = t_tree + t_forces + t_update
+
+    print*
+    print '(A)', "  ===================================================="
+    
+    ! Título centrado para Serial
+    print '(A)', "            ANALYSIS OF EXECUTION - Mode: Serial"
+    print '(A)', "             Resource usage: 1 Core (Single)"
+
+    print '(A)', "  ===================================================="
+    print '(A, F10.3, A)', "   Total execution time:    ", t_total, " s"
+    print '(A)', "  ----------------------------------------------------"
+    
+    ! Desglose de las fases
+    print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:  ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:   ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Integration and output: ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
+    print '(A)', "  ____________________________________________________"
+    
+    if (t_total > 0) then
+        print '(A, F12.2, A)', "   Throughput: ", (real(n, dp) / t_total), " particles/s"
+    end if
+    print '(A)', "  ===================================================="
+    print*
 
 
 

@@ -8,7 +8,7 @@ FFLAGS   = -O3 -Wall -fimplicit-none
 OMP_FLAG = -fopenmp
 
 # Ejecutables
-GEN_EXE   = input_gen
+GEN_EXE   = input_rotation
 EXE_SERIE = tree_serie
 EXE_OMP   = tree_omp
 EXE_MPI   = tree_mpi
@@ -31,7 +31,7 @@ $(EXE_OMP): geometry_omp.o particle_omp.o tree_openmp.o
 	$(FC_OMP) $(FFLAGS) $(OMP_FLAG) -o $@ $^
 
 # 4. Versión MPI
-$(EXE_MPI): geometry_mpi.o particle_mpi.o tree_MPI.o
+$(EXE_MPI): geometry_mpi.o particle_mpi.o tree_mpi.o
 	$(FC_MPI) $(FFLAGS) -o $@ $^
 
 # ==========================================
@@ -62,24 +62,24 @@ geometry_mpi.o: geometry.f90
 	$(FC_MPI) $(FFLAGS) -c $< -o $@
 particle_mpi.o: particle.f90 geometry_mpi.o
 	$(FC_MPI) $(FFLAGS) -c $< -o $@
-tree_MPI.o: tree_MPI.f90 particle_mpi.o
+tree_mpi.o: tree_MPI.f90 particle_mpi.o
 	$(FC_MPI) $(FFLAGS) -c $< -o $@
 
 # ==========================================
 # Ejecución y Comparativa
 # ==========================================
 run_all: all
-	@echo "--- Generando input_rotation.dat ---"
-	./$(GEN_EXE)
+	@echo "--- Generating input_rotation.dat ---"
+	@./$(GEN_EXE)
 	
-	@echo "\n--- Ejecutando SERIE ---"
-	time ./$(EXE_SERIE) < input_rotation.dat
+	@echo "\n--- Ejecutando VERSIÓN SERIE ---"
+	@./$(EXE_SERIE) < input_rotation.dat
 	
-	@echo "\n--- Ejecutando OPENMP (4 hilos) ---"
-	export OMP_NUM_THREADS=4 && time ./$(EXE_OMP) < input_rotation.dat
+	@echo "\n--- Ejecutando OPENMP ---"
+	@export OMP_NUM_THREADS=8 && ./$(EXE_OMP) < input_rotation.dat
 	
-	@echo "\n--- Ejecutando MPI (4 procesos) ---"
-	time mpirun -np 4 ./$(EXE_MPI) < input_rotation.dat
+	@echo "\n--- Ejecutando MPI ---"
+	@mpirun -np 4 ./$(EXE_MPI) < input_rotation.dat
 
 clean:
 	rm -f *.o *.mod $(GEN_EXE) $(EXE_SERIE) $(EXE_OMP) $(EXE_MPI) input_rotation.dat output*.dat

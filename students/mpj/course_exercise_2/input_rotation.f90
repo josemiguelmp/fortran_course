@@ -8,10 +8,10 @@ PROGRAM galaxia_bh
   REAL(kind=bit64) :: dt, dt_out, t_end
 
   ! 1. Configuración idéntica a tu READ
-  n = 57600
-  dt = 0.002_bit64
+  n = 10000
+  dt = 0.01_bit64
   dt_out = 0.1_bit64
-  t_end = 1.0_bit64
+  t_end = 30.0_bit64
   
   mass_center = 100.0_bit64  ! Agujero negro central
   mass_disk = 0.001_bit64   ! Estrellas

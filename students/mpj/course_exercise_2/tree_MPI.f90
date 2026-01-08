@@ -1,24 +1,25 @@
-! Algoritmo Barnes-Hut en Fortran90 paralelizado en openMPI
-! 5.2 Codigo serie para problema N-body con algoritmo Barnes-Hut
-PROGRAM tree
+! Algoritmo Barnes-Hut en Fortran90 paralelizado con MPI
+PROGRAM tree_mpi
     use geometry
     use particle
     use mpi
     IMPLICIT NONE
 
-    INTEGER :: ierr, my_rank, n_procs, i_start, i_end  ! MPI variables
-
-    INTEGER :: i,j,k,n
-    REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
+    ! MPI variables
+    INTEGER :: ierr, my_rank, n_procs, i_start, i_end
+    
+    ! Simulation variables
+    INTEGER :: i, j, k, n
+    REAL(dp) :: dt, t_end, t, dt_out, t_out
     REAL(dp), PARAMETER :: theta = 1.0_dp
-    real(dp), parameter :: epsilon = 0.1_dp
+    REAL(dp), PARAMETER :: epsilon = 0.2_dp
 
     TYPE(particle3d), DIMENSION(:), ALLOCATABLE :: p
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
-    TYPE(vector3d) :: rji
-
+    
+    ! Estructuras del Árbol Barnes-Hut
     TYPE RANGE
-        TYPE(point3d) :: min,max
+        TYPE(point3d) :: min, max
     END TYPE RANGE
 
     TYPE CPtr
@@ -29,7 +30,7 @@ PROGRAM tree
         TYPE (RANGE) :: range
         TYPE(point3d) :: part
         INTEGER :: pos
-        INTEGER :: type !! 0 = no particle; 1 = particle; 2 = conglomerado
+        INTEGER :: type !! 0 = vacía; 1 = partícula; 2 = conglomerado
         REAL(dp) :: mass
         TYPE(vector3d) :: c_o_m
         TYPE (CPtr), DIMENSION(2,2,2) :: subcell
@@ -37,16 +38,17 @@ PROGRAM tree
 
     TYPE (CELL), POINTER :: head, temp_cell
 
-    ! Nuevas variables para salida
+    ! Variables for controlling time
+    integer(kind=8) :: c_ini, c_fin, c_rate
+    real(dp) :: t_tree, t_forces, t_update, t_total
     INTEGER :: ios
-    INTEGER :: unit_out
 
-    
+    ! MPI initialization
     CALL MPI_INIT(ierr)
     CALL MPI_COMM_RANK(MPI_COMM_WORLD, my_rank, ierr)
     CALL MPI_COMM_SIZE(MPI_COMM_WORLD, n_procs, ierr)
 
-    !! --- INICIO DE LECTURA SINCRONIZADA ---
+    ! --- LECTURA DE DATOS (Solo Rank 0) ---
     IF (my_rank == 0) THEN
         READ*, dt
         READ*, dt_out
@@ -54,20 +56,13 @@ PROGRAM tree
         READ*, n
     END IF
 
-    ! Reparto de carga en la paralelización
-    i_start = (my_rank * n / n_procs) + 1
-    i_end   = ((my_rank + 1) * n / n_procs)
-    if (my_rank == n_procs - 1) i_end = n
-
-    ! El proceso 0 envía estas variables a todos los demás
+    ! Difundir parámetros básicos a todos los procesos
     CALL MPI_BCAST(dt, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     CALL MPI_BCAST(dt_out, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     CALL MPI_BCAST(t_end, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     CALL MPI_BCAST(n, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
 
-    ! Ahora todos saben cuánto vale 'n', ya podemos reservar memoria en todos
-    ALLOCATE(p(n))
-    ALLOCATE(a(n))
+    ALLOCATE(p(n), a(n))
 
     IF (my_rank == 0) THEN
         DO i = 1, n
@@ -76,549 +71,328 @@ PROGRAM tree
         END DO
     END IF
 
-    ! Compartir el array de partículas con todos (usando un buffer temporal plano)
-    ! Nota: Para simplificar, bcast de todo el tipo derivado si MPI lo permite, 
-    ! pero lo más seguro en cursos es repartir los datos clave:
-    CALL Sincronizar_Particulas_Iniciales(p, n, my_rank)
-    !! --- FIN DE LECTURA SINCRONIZADA ---
+    ! Sincronización inicial para que todos tengan la misma galaxia
+    CALL Sincronizar_Particulas_MPI(p, n)
 
+    ! Reparto de carga en la paralelización
+    i_start = (my_rank * n / n_procs) + 1
+    i_end   = ((my_rank + 1) * n / n_procs)
+    if (my_rank == n_procs - 1) i_end = n
 
-    !! Inicializacion head node
     ALLOCATE(head)
-    CALL Calculate_ranges(head)
-    head%type = 0
-    CALL Nullify_Pointers(head)
 
-    !! Creacion del arbol inicial
-    DO i = 1,n
-        CALL Find_Cell(head,temp_cell,p(i)%p)
-        CALL Place_Cell(temp_cell,p(i)%p,i)
-    END DO
+    t_tree = 0.0
+    t_forces = 0.0
+    t_update = 0.0
+    call system_clock(count_rate = c_rate)
 
-    CALL Borrar_empty_leaves(head)
-    CALL Calculate_masses(head)
-
-    !! Aceleraciones iniciales
-    a = vector3d(0.0_dp,0.0_dp,0.0_dp)
-    CALL Calculate_forces(head)
-
-    ! Apertura del archivo: SOLO EL NÚCLEO 0
     IF (my_rank == 0) THEN
-        OPEN(UNIT=10, FILE='output_mpi.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
-        IF (ios /= 0) THEN
-            PRINT*, 'Error abriendo output_mpi.dat'
-            CALL MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
-        END IF
+        OPEN(UNIT=10, FILE='output_mpi.dat', STATUS='REPLACE', ACTION='WRITE')
     END IF
 
-
-    !! Bucle principal
+    !! Main loop
     t_out = 0.0_dp
-
     DO t = 0.0_dp, t_end, dt
-        ! Actualización de velocidades y posiciones
-        DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
-            p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
-            p(i)%p = p(i)%p + p(i)%v * dt
-        END DO
+        call system_clock(count = c_ini)
 
-        ! Reconstrucción del árbol
+        ! Actualización de velocidades y posiciones
+        IF (my_rank == 0) THEN
+            DO i = 2, n  ! Saltamos el 1 (Agujero Negro central)
+                p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
+                p(i)%p = p(i)%p + p(i)%v * dt
+            END DO
+        END IF
+
+        CALL Sincronizar_Particulas_MPI(p, n)
+
+        ! Reconstrucción del Árbol
         CALL Borrar_tree(head)
         CALL Calculate_ranges(head)
         head%type = 0
         CALL Nullify_Pointers(head)
 
-        DO i = 1,n
-            CALL Find_Cell(head,temp_cell,p(i)%p)
-            CALL Place_Cell(temp_cell,p(i)%p,i)
+        DO i = 1, n
+            CALL Find_Cell(head, temp_cell, p(i)%p)
+            CALL Place_Cell(temp_cell, p(i)%p, i)
         END DO
 
         CALL Borrar_empty_leaves(head)
         CALL Calculate_masses(head)
 
-        ! Cálculo de aceleraciones en paralelo
-        a = vector3d(0.0_dp,0.0_dp,0.0_dp)
+        call system_clock(count=c_fin)
+        t_tree = t_tree + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini)
+
+        ! Cálculo de aceleraciones en Paralelo
+        a = vector3d(0.0_dp, 0.0_dp, 0.0_dp)
         DO i = i_start, i_end
             CALL Calculate_forces_aux(p(i), a(i), head)
         END DO
 
-        ! Obtenemos el vector de aceleraciones completo en todos los procesos
+        ! Vector de aceleraciones completo en todos los procesos
         CALL Sincronizar_Aceleraciones_MPI(a, n)
 
+        call system_clock(count=c_fin)
+        t_forces = t_forces + real(c_fin - c_ini, dp) / real(c_rate, dp)
+
+        call system_clock(count=c_ini)
+
         ! Actualización final de velocidades
-        DO i=1,n
-            p(i)%v = p(i)%v + a(i) * (dt/2)
-        END DO
-
-        t_out = t_out + dt
-
-        ! Escritura de los datos al archivo
-        IF (my_rank==0 .AND. t_out >= dt_out) THEN
-            WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
-
-            ! Escribir posiciones de todas las partículas
-            DO i=1,n
-                WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
+        IF (my_rank == 0) THEN
+            DO i = 1, n
+                p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             END DO
-            WRITE(10,*)
+            
+            t_out = t_out + dt
+
+            ! Escritura de los datos al archivo
+            IF (t_out >= dt_out) THEN
+                WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
+                DO i = 1, n
+                    WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
+                END DO
+                WRITE(10,*)
+                t_out = 0.0_dp
+            END IF
         END IF
+
+        call system_clock(count=c_fin)
+        t_update = t_update + real(c_fin - c_ini, dp) / real(c_rate, dp)
     END DO
-    CALL MPI_FINALIZE(ierr)
 
     CLOSE(10)
+    CALL MPI_FINALIZE(ierr)
 
+    IF (my_rank == 0) THEN
+        t_total = t_tree + t_forces + t_update
 
+        ! Print performance results for MPI
+        print*
+        print '(A)', "  ===================================================="
+        
+        ! Título centrado para MPI
+        print '(A)', "            ANALYSIS OF EXECUTION - Mode: MPI"
+        
+        ! Cambiamos threads por MPI processes
+        print '(A, I2)', "             Active MPI processes:     ", n_procs
 
-    CONTAINS
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Calculate_Ranges !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Calcula los rangos de las partıculas en la
-    !! matriz r en las 3 dimensiones y lo pone en la
-    !! variable apuntada por goal
-    !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        SUBROUTINE Calculate_Ranges(goal)
-            TYPE(CELL), POINTER :: goal
-            TYPE(point3d) :: mins, maxs, medios
-            REAL(dp) :: span
+        print '(A)', "  ===================================================="
+        print '(A, F10.3, A)', "   Total execution time:    ", t_total, " s"
+        print '(A)', "  ----------------------------------------------------"
+        
+        ! Desglose de las fases
+        print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:  ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
+        print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:   ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
+        print '(A, F10.3, A, F5.1, A)', "   - Integration and output: ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
+        print '(A)', "  ____________________________________________________"
+        
+        if (t_total > 0) then
+            print '(A, F12.2, A)', "   Throughput: ", (real(n, dp) / t_total), " particles/s"
+        end if
+        print '(A)', "  ===================================================="
+        print*
+    END IF
 
-            mins%x = MINVAL([p(:)%p%x])
-            mins%y = MINVAL([p(:)%p%y])
-            mins%z = MINVAL([p(:)%p%z])
+CONTAINS
 
-            maxs%x = MAXVAL([p(:)%p%x])
-            maxs%y = MAXVAL([p(:)%p%y])
-            maxs%z = MAXVAL([p(:)%p%z])
-            ! Al calcular span le sumo un 10% para que las
-            ! particulas no caigan justo en el borde
-            span = MAX(maxs%x - mins%x, MAX(maxs%y - mins%y, maxs%z - mins%z)) * 1.1_dp
+    ! --- SUBRUTINAS DE COMUNICACIÓN MPI ---
 
+    SUBROUTINE Sincronizar_Particulas_MPI(p_vec, n_particles)
+        TYPE(particle3d), DIMENSION(:) :: p_vec
+        INTEGER, INTENT(IN) :: n_particles
+        INTEGER :: ierr
+        ! 7 componentes de 8 bytes (masa, 3 pos, 3 vel) = 56 bytes por partícula
+        CALL MPI_BCAST(p_vec, n_particles * 56, MPI_BYTE, 0, MPI_COMM_WORLD, ierr)
+    END SUBROUTINE
 
-            medios%x = (mins%x + maxs%x)/2.0_dp
-            medios%y = (mins%y + maxs%y)/2.0_dp
-            medios%z = (mins%z + maxs%z)/2.0_dp
+    SUBROUTINE Sincronizar_Aceleraciones_MPI(a_vec, n_particles)
+        TYPE(vector3d), DIMENSION(:) :: a_vec
+        INTEGER, INTENT(IN) :: n_particles
+        REAL(dp), DIMENSION(3*n_particles) :: buf_send, buf_recv
+        INTEGER :: i, ierr
+        DO i = 1, n_particles
+            buf_send(3*i-2) = a_vec(i)%x
+            buf_send(3*i-1) = a_vec(i)%y
+            buf_send(3*i)   = a_vec(i)%z
+        END DO
+        CALL MPI_ALLREDUCE(buf_send, buf_recv, 3*n_particles, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+        DO i = 1, n_particles
+            a_vec(i)%x = buf_recv(3*i-2)
+            a_vec(i)%y = buf_recv(3*i-1)
+            a_vec(i)%z = buf_recv(3*i)
+        END DO
+    END SUBROUTINE
 
-            goal%range%min = medios - vector3d(span/2, span/2, span/2)
-            goal%range%max = medios + vector3d(span/2, span/2, span/2)
-        END SUBROUTINE Calculate_Ranges
-    
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Find_Cell !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Encuentra la celda donde colocaremos la particula.
-    !! Si la celda que estamos considerando no tiene
-    !! particula o tiene una particula, es esta celda donde
-    !! colocaremos la particula.
-    !! Si la celda que estamos considerando es un "conglomerado",
-    !! buscamos con la funcion BELONGS a que subcelda de las 8
-    !! posibles pertenece y con esta subcelda llamamos de nuevo
-    !! a Find_Cell
-    !!
-    !! NOTA: Cuando se crea una celda "conglomerado" se crean las
-    !! 8 subceldas, por lo que podemos asumir que siempre existen
-    !! las 8. Las celdas vacıas se borran al final del todo, cuando
-    !! todo el arbol ha sido ya creado.
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Find_Cell(root,goal,part)
+    ! --- LÓGICA DEL ÁRBOL BARNES-HUT (Basada en tu código original) ---
+
+    SUBROUTINE Calculate_Ranges(goal)
+        TYPE(CELL), POINTER :: goal
+        TYPE(point3d) :: mins, maxs, medios
+        REAL(dp) :: span
+        mins%x = MINVAL(p%p%x); mins%y = MINVAL(p%p%y); mins%z = MINVAL(p%p%z)
+        maxs%x = MAXVAL(p%p%x); maxs%y = MAXVAL(p%p%y); maxs%z = MAXVAL(p%p%z)
+        span = MAX(maxs%x-mins%x, MAX(maxs%y-mins%y, maxs%z-mins%z)) * 1.1_dp
+        medios%x = (mins%x+maxs%x)/2.0; medios%y = (mins%y+maxs%y)/2.0; medios%z = (mins%z+maxs%z)/2.0
+        goal%range%min = medios - vector3d(span/2, span/2, span/2)
+        goal%range%max = medios + vector3d(span/2, span/2, span/2)
+    END SUBROUTINE
+
+    RECURSIVE SUBROUTINE Find_Cell(root, goal, part)
         TYPE(CELL), POINTER :: root, goal, temp
         TYPE(point3d), INTENT(IN) :: part
-        INTEGER :: i,j,k
-
-        SELECT CASE (root%type)
-        CASE (2)
-            out: DO i = 1,2
-                DO j = 1,2
-                    DO k = 1,2
-                        IF (Belongs(part, root%subcell(i,j,k)%ptr)) THEN
-                            CALL Find_Cell(root%subcell(i,j,k)%ptr,temp,part)
-                            goal => temp
-                            EXIT out
-                        END IF
-                    END DO
-                END DO
-            END DO out
-        CASE DEFAULT
+        INTEGER :: i, j, k
+        IF (root%type == 2) THEN
+            DO i=1,2; DO j=1,2; DO k=1,2
+                IF (Belongs(part, root%subcell(i,j,k)%ptr)) THEN
+                    CALL Find_Cell(root%subcell(i,j,k)%ptr, temp, part)
+                    goal => temp; RETURN
+                END IF
+            END DO; END DO; END DO
+        ELSE
             goal => root
-        END SELECT
-    END SUBROUTINE Find_Cell
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Place_Cell !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Se ejecuta tras Find_Cell, en la celda que
-    !! esa funcion nos devuelve, por lo que siempre
-    !! es una celda de tipo 0 (sin particula) o de tipo 1
-    !! (con una particula). En el caso de que es una celda
-    !! de tipo 1 habra que subdividir la celda y poner en
-    !! su lugar las dos particulas (la que originalmente
-    !! estaba, y la nueva).
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Place_Cell(goal,part,n)
+        END IF
+    END SUBROUTINE
+
+    RECURSIVE SUBROUTINE Place_Cell(goal, part, n_idx)
         TYPE(CELL), POINTER :: goal, temp
         TYPE(point3d), INTENT(IN) :: part
-        INTEGER, INTENT(IN) :: n
-
-        SELECT CASE (goal%type)
-        CASE (0)
-            goal%type = 1
-            goal%part = part
-            goal%pos = n
-        CASE (1)
-            ! Si las partículas están virtualmente en el mismo sitio, no subdividas más
-            IF (ABS(goal%part%x - part%x) < epsilon .AND. &
-                ABS(goal%part%y - part%y) < epsilon .AND. &
-                ABS(goal%part%z - part%z) < epsilon) THEN
-                RETURN
-            END IF
-
+        INTEGER, INTENT(IN) :: n_idx
+        IF (goal%type == 0) THEN
+            goal%type = 1; goal%part = part; goal%pos = n_idx
+        ELSE IF (goal%type == 1) THEN
+            IF (MAXVAL(ABS([goal%part%x-part%x, goal%part%y-part%y, goal%part%z-part%z])) < epsilon) RETURN
             CALL Crear_Subcells(goal)
-            CALL Find_Cell(goal,temp,part)
-            CALL Place_Cell(temp,part,n)
-        CASE DEFAULT
-            print*,"SHOULD NOT BE HERE. ERROR!"
-        END SELECT
-    END SUBROUTINE Place_Cell
+            CALL Find_Cell(goal, temp, part)
+            CALL Place_Cell(temp, part, n_idx)
+        END IF
+    END SUBROUTINE
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Crear_Subcells !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Esta funcion se llama desde Place_Cell y
-    !! solo se llama cuando ya hay una particula
-    !! en la celda, con lo que la tenemos que
-    !! subdividir. Lo que hace es crear 8 subceldas
-    !! que "cuelgan" de goal y la particula que
-    !! estaba en goal la pone en la subcelda que
-    !! corresponda de la 8 nuevas creadas.
-    !!
-    !! Para crear las subceldas utilizar las funciones
-    !! CALCULAR_RANGE, BELONGS y NULLIFY_POINTERS
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Crear_Subcells(goal)
         TYPE(CELL), POINTER :: goal
-        TYPE(point3d) :: part
-        INTEGER :: i,j,k
-        INTEGER, DIMENSION(3) :: octant
+        TYPE(point3d) :: part_old
+        INTEGER :: i, j, k, p_old
+        part_old = goal%part; p_old = goal%pos; goal%type = 2
+        DO i=1,2; DO j=1,2; DO k=1,2
+            ALLOCATE(goal%subcell(i,j,k)%ptr)
+            goal%subcell(i,j,k)%ptr%range%min = Calcular_Range(0, goal, [i,j,k])
+            goal%subcell(i,j,k)%ptr%range%max = Calcular_Range(1, goal, [i,j,k])
+            IF (Belongs(part_old, goal%subcell(i,j,k)%ptr)) THEN
+                goal%subcell(i,j,k)%ptr%type = 1
+                goal%subcell(i,j,k)%ptr%part = part_old
+                goal%subcell(i,j,k)%ptr%pos = p_old
+            ELSE
+                goal%subcell(i,j,k)%ptr%type = 0
+            END IF
+            CALL Nullify_Pointers(goal%subcell(i,j,k)%ptr)
+        END DO; END DO; END DO
+    END SUBROUTINE
 
-        part = goal%part
-        goal%type = 2
-
-        DO i=1,2
-            DO j=1,2
-                DO k=1,2
-                    octant = (/i,j,k/)
-                    ALLOCATE(goal%subcell(i,j,k)%ptr)
-                    goal%subcell(i,j,k)%ptr%range%min = Calcular_Range(0,goal,octant)
-                    goal%subcell(i,j,k)%ptr%range%max = Calcular_Range(1,goal,octant)
-  
-                    IF (Belongs(part,goal%subcell(i,j,k)%ptr)) THEN
-                        goal%subcell(i,j,k)%ptr%part = part
-                        goal%subcell(i,j,k)%ptr%type = 1
-                        goal%subcell(i,j,k)%ptr%pos = goal%pos
-                    ELSE
-                        goal%subcell(i,j,k)%ptr%type = 0
-                    END IF
-                    CALL Nullify_Pointers(goal%subcell(i,j,k)%ptr)
-                END DO
-            END DO
-        END DO
-    END SUBROUTINE Crear_Subcells
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Nullify_Pointers !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Simplemente me NULLIFYca los punteros de
-    !! las 8 subceldas de la celda "goal"
-    !!
-    !! Se utiliza en el bucle principal y por
-    !! CREAR_SUBCELLS
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    SUBROUTINE Nullify_Pointers(goal)
-        TYPE(CELL), POINTER :: goal
-        INTEGER :: i,j,k
-        DO i=1,2
-            DO j=1,2
-                DO k=1,2
-                    NULLIFY(goal%subcell(i,j,k)%ptr)
-                END DO
-            END DO
-        END DO
-    END SUBROUTINE Nullify_Pointers
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Belongs !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Devuelve TRUE si la particula "part" esta
-    !! dentro del rango de la celda "goal"
-    !!
-    !! Utilizada por FIND_CELL
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    FUNCTION Belongs(part,goal)
+    FUNCTION Belongs(part, goal)
         TYPE(point3d), INTENT(IN) :: part
         TYPE(CELL), POINTER :: goal
         LOGICAL :: Belongs
+        Belongs = (part%x >= goal%range%min%x .AND. part%x <= goal%range%max%x .AND. &
+                   part%y >= goal%range%min%y .AND. part%y <= goal%range%max%y .AND. &
+                   part%z >= goal%range%min%z .AND. part%z <= goal%range%max%z)
+    END FUNCTION
 
-        IF (part%x >= goal%range%min%x .AND. part%x <= goal%range%max%x .AND. &
-            part%y >= goal%range%min%y .AND. part%y <= goal%range%max%y .AND. &
-            part%z >= goal%range%min%z .AND. part%z <= goal%range%max%z) THEN
-            Belongs = .TRUE.
-        ELSE
-            Belongs = .FALSE.
-        END IF
-    END FUNCTION Belongs
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Calcular_Range !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Dado un octante "otctant" (1,1,1, 1,1,2 ... 2,2,2),
-    !! calcula sus rangos en base a los rangos de
-    !! "goal". Si "what" = 0 calcula los minimos. Si what=1
-    !! calcula los maximos.
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    FUNCTION Calcular_Range(what,goal,octant)
+    FUNCTION Calcular_Range(what, goal, octant)
         INTEGER, INTENT(IN) :: what
         TYPE(CELL), POINTER :: goal
         INTEGER, DIMENSION(3), INTENT(IN) :: octant
         TYPE(point3d) :: Calcular_Range, mid
-
-        mid%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
-        mid%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
-        mid%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
-
-        SELECT CASE (what)
-        CASE (0)   ! min
+        mid%x = (goal%range%min%x + goal%range%max%x)/2.0
+        mid%y = (goal%range%min%y + goal%range%max%y)/2.0
+        mid%z = (goal%range%min%z + goal%range%max%z)/2.0
+        IF (what == 0) THEN
             Calcular_Range%x = MERGE(goal%range%min%x, mid%x, octant(1)==1)
             Calcular_Range%y = MERGE(goal%range%min%y, mid%y, octant(2)==1)
             Calcular_Range%z = MERGE(goal%range%min%z, mid%z, octant(3)==1)
-
-        CASE (1)   ! max
+        ELSE
             Calcular_Range%x = MERGE(mid%x, goal%range%max%x, octant(1)==1)
             Calcular_Range%y = MERGE(mid%y, goal%range%max%y, octant(2)==1)
             Calcular_Range%z = MERGE(mid%z, goal%range%max%z, octant(3)==1)
-        END SELECT
-    END FUNCTION Calcular_Range
-
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Borrar_empty_leaves !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Se llama una vez completado el arbol para
-    !! borrar (DEALLOCATE) las celdas vacıas (i.e.
-    !! sin partıcula).
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Borrar_empty_leaves(goal)
-        TYPE(CELL),POINTER :: goal
-        INTEGER :: i,j,k
-
-        IF (ASSOCIATED(goal%subcell(1,1,1)%ptr)) THEN
-            DO i = 1,2
-                DO j = 1,2
-                    DO k = 1,2
-                        CALL Borrar_empty_leaves(goal%subcell(i,j,k)%ptr)
-                        IF (goal%subcell(i,j,k)%ptr%type == 0) THEN
-                            DEALLOCATE (goal%subcell(i,j,k)%ptr)
-                        END IF
-                    END DO
-                END DO
-            END DO
         END IF
-    END SUBROUTINE Borrar_empty_leaves
+    END FUNCTION
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Borrar_tree !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Borra el arbol completo, excepto la "head".
-    !!
-    !! El arbol se ha de regenerar continuamente,
-    !! por lo que tenemos que borrar el antiguo
-    !! para evitar "memory leaks".
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Borrar_tree(goal)
-        TYPE(CELL),POINTER :: goal
-        INTEGER :: i,j,k
-        
-        DO i = 1,2
-            DO j = 1,2
-                DO k = 1,2
-                    IF (ASSOCIATED(goal%subcell(i,j,k)%ptr)) THEN
-                        CALL Borrar_tree(goal%subcell(i,j,k)%ptr)
-                        DEALLOCATE (goal%subcell(i,j,k)%ptr)
-                    END IF
-                END DO
-            END DO
-        END DO
-    END SUBROUTINE Borrar_tree
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Calculate_masses !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Nos calcula para todas las celdas que cuelgan
-    !! de "goal" su masa y su center-of-mass.
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Calculate_masses(goal)
         TYPE(CELL), POINTER :: goal
-        INTEGER :: i,j,k
-        TYPE(particle3d) :: part
-        TYPE(vector3d) :: c_o_m
-        REAL(dp) :: total_mass
-
-        goal%mass = 0.0_dp
-        goal%c_o_m = vector3d(0.0_dp,0.0_dp,0.0_dp)
-
-        SELECT CASE(goal%type)
-        CASE(1)
+        INTEGER :: i, j, k
+        REAL(dp) :: m_sub
+        goal%mass = 0.0; goal%c_o_m = vector3d(0.0, 0.0, 0.0)
+        IF (goal%type == 1) THEN
             goal%mass = p(goal%pos)%m
             goal%c_o_m = vector3d(p(goal%pos)%p%x, p(goal%pos)%p%y, p(goal%pos)%p%z)
-        CASE(2)
-            DO i=1,2
-                DO j=1,2
-                    DO k=1,2
-                        IF (ASSOCIATED(goal%subcell(i,j,k)%ptr)) THEN
-                            CALL Calculate_masses(goal%subcell(i,j,k)%ptr)
-                            total_mass = goal%mass
-                            goal%mass = goal%mass + goal%subcell(i,j,k)%ptr%mass
-                            goal%c_o_m = (total_mass * goal%c_o_m + &
-                                          goal%subcell(i,j,k)%ptr%mass * goal%subcell(i,j,k)%ptr%c_o_m) / goal%mass
-                        END IF
-                    END DO
-                END DO
-            END DO
-        END SELECT
-    END SUBROUTINE Calculate_masses
+        ELSE IF (goal%type == 2) THEN
+            DO i=1,2; DO j=1,2; DO k=1,2
+                IF (ASSOCIATED(goal%subcell(i,j,k)%ptr)) THEN
+                    CALL Calculate_masses(goal%subcell(i,j,k)%ptr)
+                    m_sub = goal%subcell(i,j,k)%ptr%mass
+                    goal%c_o_m = (goal%mass * goal%c_o_m + m_sub * goal%subcell(i,j,k)%ptr%c_o_m) / (goal%mass + m_sub)
+                    goal%mass = goal%mass + m_sub
+                END IF
+            END DO; END DO; END DO
+        END IF
+    END SUBROUTINE
 
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Calculate_forces !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Calcula las fuerzas de todas las particulas contra "head".
-    !! Se sirve de la funcion Calculate_forces_aux que es la
-    !! que en realidad hace los calculos para cada particula
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    SUBROUTINE Calculate_forces(head)
-    TYPE(CELL), POINTER :: head
-    INTEGER :: i
-
-    DO i=1, n  ! Usa n, que es el número de partículas
-        ! Pasamos la partícula y su índice para actualizar a(i)
-        CALL Calculate_forces_aux(p(i), a(i), head)
-    END DO
-    END SUBROUTINE Calculate_forces
-
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !! Calculate_forces_aux !!
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!
-    !! Dada una particula "goal" calcula las fuerzas
-    !! sobre ella de la celda "tree". Si "tree" es una
-    !! celda que contiene una sola particula el caso
-    !! es sencillo, pues se tratan de dos particulas.
-    !!
-    !! Si "tree" es una celda conglomerado, hay que ver primero
-    !! si l/D < theta. Es decir si el lado de la celda (l)
-    !! dividido entre la distancia de la particula goal
-    !! al center_of_mass de la celda tree (D) es menor que theta.
-    !! En caso de que asi sea, tratamos a la celda como una
-    !! sola particula. En caso de que no se menor que theta,
-    !! entonces tenemos que considerar todas las subceldas
-    !! de tree y para cada una de ellas llamar recursivamente
-    !! a Calculate_forces_aux
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, goal_accel, tree)
-        TYPE(particle3d), INTENT(IN) :: goal_particle
-        TYPE(vector3d), INTENT(INOUT) :: goal_accel
+    RECURSIVE SUBROUTINE Calculate_forces_aux(goal_p, goal_a, tree)
+        TYPE(particle3d), INTENT(IN) :: goal_p
+        TYPE(vector3d), INTENT(INOUT) :: goal_a
         TYPE(CELL), POINTER :: tree
-        INTEGER :: i,j,k
         TYPE(vector3d) :: rji
-        REAL(dp) :: r2, r3, D, l
+        REAL(dp) :: r2, D, l
+        INTEGER :: i, j, k
 
-        SELECT CASE(tree%type)
-        CASE(1)
-            ! Verificamos que no sea la misma partícula por posición
-            IF (ABS(goal_particle%p%x - tree%c_o_m%x) > 1.e-10_dp .OR. &
-                ABS(goal_particle%p%y - tree%c_o_m%y) > 1.e-10_dp .OR. &
-                ABS(goal_particle%p%z - tree%c_o_m%z) > 1.e-10_dp) THEN
-
-                rji = tree%c_o_m - goal_particle%p
-                r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
-                r3 = r2 * SQRT(r2)
-                ! AHORA SUMA A LA ACELERACIÓN
-                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
-                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
-                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
+        IF (tree%type == 1) THEN
+            rji = tree%c_o_m - goal_p%p
+            r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
+            IF (r2 > epsilon**2 + 1e-10) THEN
+                goal_a = goal_a + (tree%mass * rji) / (r2 * SQRT(r2))
             END IF
-
-        CASE(2)
+        ELSE IF (tree%type == 2) THEN
             l = tree%range%max%x - tree%range%min%x
-            rji = tree%c_o_m - goal_particle%p
+            rji = tree%c_o_m - goal_p%p
             r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
             D = SQRT(r2)
-
             IF (l/D < theta) THEN
-                r3 = r2 * D
-                goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
-                goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
-                goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3
+                goal_a = goal_a + (tree%mass * rji) / (r2 * D)
             ELSE
-                DO i=1,2
-                    DO j=1,2
-                        DO k=1,2
-                            IF (ASSOCIATED(tree%subcell(i,j,k)%ptr)) THEN
-                                CALL Calculate_forces_aux(goal_particle, goal_accel, tree%subcell(i,j,k)%ptr)
-                            END IF
-                        END DO
-                    END DO
-                END DO
+                DO i=1,2; DO j=1,2; DO k=1,2
+                    IF (ASSOCIATED(tree%subcell(i,j,k)%ptr)) CALL Calculate_forces_aux(goal_p, goal_a, tree%subcell(i,j,k)%ptr)
+                END DO; END DO; END DO
             END IF
-        END SELECT
-    END SUBROUTINE Calculate_forces_aux
+        END IF
+    END SUBROUTINE
 
+    SUBROUTINE Nullify_Pointers(goal)
+        TYPE(CELL), POINTER :: goal
+        INTEGER :: i, j, k
+        DO i=1,2; DO j=1,2; DO k=1,2; NULLIFY(goal%subcell(i,j,k)%ptr); END DO; END DO; END DO
+    END SUBROUTINE
 
-    ! NUEVA FUNCIÓN PARA PARALELIZAR
-    SUBROUTINE Sincronizar_Aceleraciones_MPI(a_vec, n_particles)
-        TYPE(vector3d), DIMENSION(:) :: a_vec
-        INTEGER, INTENT(IN) :: n_particles
-        ! Creamos buffers temporales planos (3 coordenadas por partícula)
-        REAL(dp), DIMENSION(3*n_particles) :: buffer_send, buffer_recv
-        INTEGER :: i, ierr
+    RECURSIVE SUBROUTINE Borrar_tree(goal)
+        TYPE(CELL), POINTER :: goal
+        INTEGER :: i, j, k
+        DO i=1,2; DO j=1,2; DO k=1,2
+            IF (ASSOCIATED(goal%subcell(i,j,k)%ptr)) THEN
+                CALL Borrar_tree(goal%subcell(i,j,k)%ptr)
+                DEALLOCATE(goal%subcell(i,j,k)%ptr)
+            END IF
+        END DO; END DO; END DO
+    END SUBROUTINE
 
-        ! 1. EMPAQUETAR: Pasamos de TYPE(vector3d) a un array de reales plano
-        ! Formato: [x1, y1, z1, x2, y2, z2, ..., xn, yn, zn]
-        DO i = 1, n_particles
-            buffer_send(3*i-2) = a_vec(i)%x
-            buffer_send(3*i-1) = a_vec(i)%y
-            buffer_send(3*i)   = a_vec(i)%z
-        END DO
+    RECURSIVE SUBROUTINE Borrar_empty_leaves(goal)
+        TYPE(CELL), POINTER :: goal
+        INTEGER :: i, j, k
+        IF (goal%type == 2) THEN
+            DO i=1,2; DO j=1,2; DO k=1,2
+                IF (ASSOCIATED(goal%subcell(i,j,k)%ptr)) THEN
+                    CALL Borrar_empty_leaves(goal%subcell(i,j,k)%ptr)
+                    IF (goal%subcell(i,j,k)%ptr%type == 0) DEALLOCATE(goal%subcell(i,j,k)%ptr)
+                END IF
+            END DO; END DO; END DO
+        END IF
+    END SUBROUTINE
 
-        ! 2. COMUNICAR: MPI_ALLREDUCE suma los buffers de todos los procesadores.
-        ! Como cada procesador solo calculó sus partículas y dejó las demás en 0.0,
-        ! la SUMA resulta en el vector total de aceleraciones.
-        ! ALLREDUCE hace que al terminar, TODOS los procesos tengan el resultado total.
-        CALL MPI_ALLREDUCE(buffer_send, buffer_recv, 3*n_particles, &
-                           MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-
-        ! 3. DESEMPAQUETAR: Volvemos a meter los reales en el tipo TYPE(vector3d)
-        DO i = 1, n_particles
-            a_vec(i)%x = buffer_recv(3*i-2)
-            a_vec(i)%y = buffer_recv(3*i-1)
-            a_vec(i)%z = buffer_recv(3*i)
-        END DO
-    END SUBROUTINE Sincronizar_Aceleraciones_MPI
-
-    SUBROUTINE Sincronizar_Particulas_Iniciales(p_vec, n_particles, rank)
-        TYPE(particle3d), DIMENSION(:) :: p_vec
-        INTEGER :: n_particles, rank, ierr
-        ! Usamos MPI_BYTE para enviar la estructura completa de memoria del array
-        ! Es la forma más rápida de enviar un array de TYPE a todos
-        CALL MPI_BCAST(p_vec, n_particles * 7 * 8, MPI_BYTE, 0, MPI_COMM_WORLD, ierr)
-    END SUBROUTINE Sincronizar_Particulas_Iniciales
-
-END PROGRAM tree
+END PROGRAM tree_mpi

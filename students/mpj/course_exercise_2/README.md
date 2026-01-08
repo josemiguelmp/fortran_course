@@ -176,15 +176,30 @@ As an example, the following results correspond to a galactic rotation simulatio
 
 --- Executing MPI ---
 
-  ====================================================
+   ====================================================
             ANALYSIS OF EXECUTION - Mode: MPI
              Active MPI processes:      4
   ====================================================
-   Total execution time:        69.423 s
+   Total execution time:        52.221 s
   ----------------------------------------------------
-   - Octree reconstruction:      22.628 s  ( 32.6%)
-   - Gravity calculations:       40.564 s  ( 58.4%)
-   - Integration and output:      6.231 s  (  9.0%)
+   - Octree reconstruction:      19.737 s  ( 37.8%)
+   - Gravity calculations:       27.429 s  ( 52.5%)
+   - Integration and output:      5.055 s  (  9.7%)
   ____________________________________________________
-   Throughput:       144.04 particles/s
+   Throughput:       191.49 particles/s
   ====================================================
+
+
+# Discussion of the results
+
+1. Gravity Calculations
+This phase benefits the most from parallelization. In the OpenMP version, the time is nearly cut in half (from 43.7s to 24.5s). Since force calculations for each particle are independent, the workload is distributed very efficiently across CPU threads.
+
+2. The Cost of Tree Reconstruction
+We observe that in both OpenMP and MPI, the reconstruction time increases compared to the serial version (Serial: 11.6s, MPI: 19.7s). This happens because Octree construction is an inherently sequential task in this implementation. In the MPI case, every process must rebuild the entire tree locally after receiving position updates from all other ranks, adding significant memory management and computational redundancy.
+
+3. MPI vs. OpenMP 
+OpenMP achieves the best overall time due to the low latency of shared memory. MPI shows a slight increase in total time compared to OpenMP. This is expected in systems with a relatively small number of particles/processes, as the time spent on network communication to sync positions and tree duplication offsets some of the gains made during the parallel force calculations.
+
+4. Efficiency and Scalability
+Despite using 8 threads for OpenMP and 4 processes for MPI, the speedup is not linear. The Barnes-Hut algorithm has a complexity of $O(N \log N)$. According to Amdahl's Law, the sequential nature of the tree construction acts as a bottleneck; no matter how much we accelerate the gravity calculations, the total gain is limited by the non-parallelized sections of the code.

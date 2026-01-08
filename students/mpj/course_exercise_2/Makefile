@@ -8,7 +8,7 @@ FFLAGS   = -O3 -Wall -fimplicit-none
 OMP_FLAG = -fopenmp
 
 # Ejecutables
-GEN_EXE   = input_spherical
+GEN_EXE   = input_rotation
 EXE_SERIE = tree_serie
 EXE_OMP   = tree_omp
 EXE_MPI   = tree_mpi
@@ -19,7 +19,7 @@ EXE_MPI   = tree_mpi
 all: $(GEN_EXE) $(EXE_SERIE) $(EXE_OMP) $(EXE_MPI)
 
 # 1. Generador de datos (No necesita los módulos de física normalmente)
-$(GEN_EXE): input_spherical.f90
+$(GEN_EXE): input_rotation.f90
 	$(FC_SERIE) $(FFLAGS) -o $@ $<
 
 # 2. Versión Serie
@@ -69,17 +69,17 @@ tree_mpi.o: tree_MPI.f90 particle_mpi.o
 # Ejecución y Comparativa
 # ==========================================
 run_all: all
-	@echo "--- Generating input_spherical.dat ---"
+	@echo "--- Generating input_rotation.dat ---"
 	@./$(GEN_EXE)
 	
 	@echo "\n--- Ejecutando VERSIÓN SERIE ---"
-	@./$(EXE_SERIE) < input_spherical.dat
+	@./$(EXE_SERIE) < input_rotation.dat
 	
 	@echo "\n--- Ejecutando OPENMP ---"
-	@export OMP_NUM_THREADS=8 && ./$(EXE_OMP) < input_spherical.dat
+	@export OMP_NUM_THREADS=8 && ./$(EXE_OMP) < input_rotation.dat
 	
 	@echo "\n--- Ejecutando MPI ---"
-	@mpirun -np 4 ./$(EXE_MPI) < input_spherical.dat
+	@mpirun -np 4 ./$(EXE_MPI) < input_rotation.dat
 
 clean:
-	rm -f *.o *.mod $(GEN_EXE) $(EXE_SERIE) $(EXE_OMP) $(EXE_MPI) input_spherical.dat output*.dat
+	rm -f *.o *.mod $(GEN_EXE) $(EXE_SERIE) $(EXE_OMP) $(EXE_MPI) input_rotation.dat output*.dat

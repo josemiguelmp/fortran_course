@@ -95,7 +95,7 @@ PROGRAM tree
         call system_clock(count = c_ini) ! INICIO MEDICIÓN TREE + POSICIONES
 
         ! Actualización de velocidades y posiciones
-        DO i=1,n
+        DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO

@@ -1,12 +1,9 @@
 ! Algoritmo Barnes-Hut en Fortran90
 ! 5.2 Codigo serie para problema N-body con algoritmo Barnes-Hut
-PROGRAM tree_omp
+PROGRAM tree
     use geometry
     use particle
-    use omp_lib
     IMPLICIT NONE
-
-    character(len=20) :: mode_name = "SERIAL"
 
     INTEGER :: i,j,k,n
     REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
@@ -17,10 +14,9 @@ PROGRAM tree_omp
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     TYPE(vector3d) :: rji
 
-    ! Time control variables:
+    character(len=20) :: mode_name = "SERIAL"
     integer(kind=8)  :: c_ini, c_fin, c_rate
     real(dp) :: t_tree, t_forces, t_update, t_total
-    INTEGER :: nt = 1
 
     TYPE RANGE
         TYPE(point3d) :: min,max
@@ -76,27 +72,19 @@ PROGRAM tree_omp
     CALL Calculate_masses(head)
 
     !! Aceleraciones iniciales
-    !$OMP PARALLEL DO DEFAULT(shared) PRIVATE(i)
-    DO i=1,n
-        a(i) = vector3d(0.0_dp,0.0_dp,0.0_dp)
-    END DO
-    !$OMP END PARALLEL DO
-
+    a = vector3d(0.0_dp,0.0_dp,0.0_dp)
     CALL Calculate_forces(head)
 
-    ! Initialization of the time variables
     t_tree   = 0.0_dp
     t_forces = 0.0_dp
     t_update = 0.0_dp
 
     call system_clock(count_rate = c_rate)
-    call system_clock(count = c_ini)
-
 
     ! Apertura del archivo de salida
-    OPEN(UNIT=10, FILE='output_openmp.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
+    OPEN(UNIT=10, FILE='output.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
     IF (ios /= 0) THEN
-        PRINT*, 'Error abriendo output_openmp.dat'
+        PRINT*, 'Error abriendo output.dat'
         STOP
     END IF
 
@@ -104,15 +92,13 @@ PROGRAM tree_omp
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
-        call system_clock(count = c_ini)
+        call system_clock(count = c_ini) ! INICIO MEDICIÓN TREE + POSICIONES
 
         ! Actualización de velocidades y posiciones
-        !$OMP PARALLEL DO PRIVATE(i)
         DO i=1,n
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO
-        !$OMP END PARALLEL DO
 
         ! Reconstrucción del árbol
         CALL Borrar_tree(head)
@@ -128,31 +114,24 @@ PROGRAM tree_omp
         CALL Borrar_empty_leaves(head)
         CALL Calculate_masses(head)
 
-        call system_clock(count=c_fin) ! Clock stop
+        call system_clock(count=c_fin) 
         t_tree = t_tree + real(c_fin - c_ini, dp) / real(c_rate, dp)
 
-        call system_clock(count=c_ini) ! Clock initialization
+        call system_clock(count=c_ini) ! INICIO MEDICIÓN FORCES
 
         ! Cálculo de aceleraciones
-        !$omp parallel do private(i)
-        DO i = 1,n
-            a(i) = vector3d(0.0_dp, 0.0_dp, 0.0_dp)
-        END DO
-        !$omp end parallel do
+        a = vector3d(0.0_dp,0.0_dp,0.0_dp)
         CALL Calculate_forces(head)
 
-        call system_clock(count=c_fin) ! Clock stop
+        call system_clock(count=c_fin)
         t_forces = t_forces + real(c_fin - c_ini, dp) / real(c_rate, dp)
 
-        call system_clock(count=c_ini) ! Clock initialization
+        call system_clock(count=c_ini) ! INICIO MEDICIÓN UPDATE/IO
 
         ! Actualización final de velocidades
-        !$OMP PARALLEL DO PRIVATE(i)
         DO i=1,n
-            p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
+            p(i)%v = p(i)%v + a(i) * (dt/2)
         END DO
-        !$OMP END PARALLEL DO
-
 
         t_out = t_out + dt
 
@@ -161,7 +140,6 @@ PROGRAM tree_omp
             WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
 
             ! Escribir posiciones de todas las partículas
-            ! Esta forma mantiene el orden x1, y1, z1, x2, y2, z2...
             DO i=1,n
                 WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
@@ -169,38 +147,33 @@ PROGRAM tree_omp
             t_out=0.0_dp
         END IF
 
-        call system_clock(count=c_fin) ! Clock stop
+        call system_clock(count=c_fin)
         t_update = t_update + real(c_fin - c_ini, dp) / real(c_rate, dp)
-
     END DO
 
     CLOSE(10)
 
     t_total = t_tree + t_forces + t_update
 
-    ! Print time info
     print*
     print '(A)', "  ===================================================="
     
-    ! Centramos el título del modo manualmente
-    print '(A)', "          ANALYSIS OF EXECUTION - Mode: OpenMP"
-    
-    !$ nt = omp_get_max_threads()
-    !$ print '(A, I2)', "           Processing threads active: ", nt
+    ! Título centrado para Serial
+    print '(A)', "            ANALYSIS OF EXECUTION - Mode: Serial"
+    print '(A)', "             Resource usage: 1 Core (Single)"
 
     print '(A)', "  ===================================================="
-    print '(A, F10.3, A)', "   Total execution time: ", t_total, " s"
+    print '(A, F10.3, A)', "   Total execution time:    ", t_total, " s"
     print '(A)', "  ----------------------------------------------------"
     
     ! Desglose de las fases
-    print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:     ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
-    print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:      ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
-    print '(A, F10.3, A, F5.1, A)', "   - Integration and output:    ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:  ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:   ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
+    print '(A, F10.3, A, F5.1, A)', "   - Integration and output: ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
     print '(A)', "  ____________________________________________________"
     
-    ! Mantenemos solo el Throughput como dato de interés científico
     if (t_total > 0) then
-        print '(A, F12.2, A)', "   Throughput: ", (n / t_total), " particles/s"
+        print '(A, F12.2, A)', "   Throughput: ", (real(n, dp) / t_total), " particles/s"
     end if
     print '(A)', "  ===================================================="
     print*
@@ -542,17 +515,14 @@ PROGRAM tree_omp
     !! que en realidad hace los calculos para cada particula
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Calculate_forces(head)
-        TYPE(CELL), POINTER :: head
-        INTEGER :: i
+    TYPE(CELL), POINTER :: head
+    INTEGER :: i
 
-        !$OMP PARALLEL DO DEFAULT(shared) PRIVATE(i) SCHEDULE(dynamic)
-        DO i=1, n
-            CALL Calculate_forces_aux(p(i), a(i), head)
-        END DO
-        !$OMP END PARALLEL DO
-
+    DO i=1, n  ! Usa n, que es el número de partículas
+        ! Pasamos la partícula y su índice para actualizar a(i)
+        CALL Calculate_forces_aux(p(i), a(i), head)
+    END DO
     END SUBROUTINE Calculate_forces
-
 
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !! Calculate_forces_aux !!
@@ -622,4 +592,4 @@ PROGRAM tree_omp
         END SELECT
     END SUBROUTINE Calculate_forces_aux
 
-END PROGRAM tree_omp
+END PROGRAM tree

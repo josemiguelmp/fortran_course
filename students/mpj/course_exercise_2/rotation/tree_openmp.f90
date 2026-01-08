@@ -108,7 +108,7 @@ PROGRAM tree_omp
 
         ! Actualización de velocidades y posiciones
         !$OMP PARALLEL DO PRIVATE(i)
-        DO i=1,n
+        DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO

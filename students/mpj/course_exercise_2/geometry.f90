@@ -1,4 +1,4 @@
-! Exercise: Direct numerical integration of a system consisting of gravitationally interacting
+! Direct numerical integration of a system consisting of gravitationally interacting
 ! particles using the leapfrog integration method.
 
 ! Module with all the rutines that I will import after in other files with the command "use"

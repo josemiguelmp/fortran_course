@@ -1,12 +1,10 @@
-! Algoritmo Barnes-Hut en Fortran90
-! 5.2 Codigo serie para problema N-body con algoritmo Barnes-Hut
+! Barnes-Hut algorithm in Fortran90 
+! OpenMP code for N-body problem with Barnes-Hut algorithm parallelized
 PROGRAM tree_omp
     use geometry
     use particle
     use omp_lib
     IMPLICIT NONE
-
-    character(len=20) :: mode_name = "SERIAL"
 
     INTEGER :: i,j,k,n
     REAL(dp) :: dt, t_end, t, dt_out, t_out, r2, r3, D, l
@@ -17,7 +15,7 @@ PROGRAM tree_omp
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     TYPE(vector3d) :: rji
 
-    ! Time control variables:
+    ! Time control variables
     integer(kind=8)  :: c_ini, c_fin, c_rate
     real(dp) :: t_tree, t_forces, t_update, t_total
     INTEGER :: nt = 1
@@ -34,7 +32,7 @@ PROGRAM tree_omp
         TYPE (RANGE) :: range
         TYPE(point3d) :: part
         INTEGER :: pos
-        INTEGER :: type !! 0 = no particle; 1 = particle; 2 = conglomerado
+        INTEGER :: type !! 0 = no particle; 1 = particle; 2 = conglomerate
         REAL(dp) :: mass
         TYPE(vector3d) :: c_o_m
         TYPE (CPtr), DIMENSION(2,2,2) :: subcell
@@ -42,11 +40,11 @@ PROGRAM tree_omp
 
     TYPE (CELL), POINTER :: head, temp_cell
 
-    ! Nuevas variables para salida
+    ! New variables for output
     INTEGER :: ios
     INTEGER :: unit_out
 
-    !! Lectura de datos
+    !! Data reading
     READ*, dt
     READ*, dt_out
     READ*, t_end
@@ -60,13 +58,13 @@ PROGRAM tree_omp
                p(i)%v%x, p(i)%v%y, p(i)%v%z
     END DO
 
-    !! Inicializacion head node
+    !! Head node initialization
     ALLOCATE(head)
     CALL Calculate_ranges(head)
     head%type = 0
     CALL Nullify_Pointers(head)
 
-    !! Creacion del arbol inicial
+    !! Initial tree creation
     DO i = 1,n
         CALL Find_Cell(head,temp_cell,p(i)%p)
         CALL Place_Cell(temp_cell,p(i)%p,i)
@@ -75,7 +73,7 @@ PROGRAM tree_omp
     CALL Borrar_empty_leaves(head)
     CALL Calculate_masses(head)
 
-    !! Aceleraciones iniciales
+    !! Initial accelerations
     !$OMP PARALLEL DO DEFAULT(shared) PRIVATE(i)
     DO i=1,n
         a(i) = vector3d(0.0_dp,0.0_dp,0.0_dp)
@@ -93,28 +91,28 @@ PROGRAM tree_omp
     call system_clock(count = c_ini)
 
 
-    ! Apertura del archivo de salida
+    ! Opening the output file
     OPEN(UNIT=10, FILE='output_openmp.dat', STATUS='REPLACE', ACTION='WRITE', IOSTAT=ios)
     IF (ios /= 0) THEN
-        PRINT*, 'Error abriendo output_openmp.dat'
+        PRINT*, 'Error opening output_openmp.dat'
         STOP
     END IF
 
-    !! Bucle principal
+    !! Main loop
     t_out = 0.0_dp
 
     DO t = 0.0_dp, t_end, dt
         call system_clock(count = c_ini)
 
-        ! Actualización de velocidades y posiciones
+        ! Velocities and positions update
         !$OMP PARALLEL DO PRIVATE(i)
-        DO i=2,n  ! EMPEZAMOS EN 2 PARA NO MOVER EL AGUJERO NEGRO
+        DO i=2,n  ! We start at 2 to avoid moving the central object
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
             p(i)%p = p(i)%p + p(i)%v * dt
         END DO
         !$OMP END PARALLEL DO
 
-        ! Reconstrucción del árbol
+        ! Tree reconstruction
         CALL Borrar_tree(head)
         CALL Calculate_ranges(head)
         head%type = 0
@@ -133,7 +131,7 @@ PROGRAM tree_omp
 
         call system_clock(count=c_ini) ! Clock initialization
 
-        ! Cálculo de aceleraciones
+        ! Computation of accelerations
         !$omp parallel do private(i)
         DO i = 1,n
             a(i) = vector3d(0.0_dp, 0.0_dp, 0.0_dp)
@@ -146,7 +144,7 @@ PROGRAM tree_omp
 
         call system_clock(count=c_ini) ! Clock initialization
 
-        ! Actualización final de velocidades
+        ! Final velocity update
         !$OMP PARALLEL DO PRIVATE(i)
         DO i=1,n
             p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
@@ -156,12 +154,12 @@ PROGRAM tree_omp
 
         t_out = t_out + dt
 
-        ! Escritura de los datos al archivo
+        ! Writing data to file
         IF (t_out >= dt_out) THEN
             WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
 
-            ! Escribir posiciones de todas las partículas
-            ! Esta forma mantiene el orden x1, y1, z1, x2, y2, z2...
+            ! Write positions of all particles 
+            ! This format maintains the order x1, y1, z1, x2, y2, z2...
             DO i=1,n
                 WRITE(10,'(3E15.7,1X)', ADVANCE='NO') p(i)%p%x, p(i)%p%y, p(i)%p%z
             END DO
@@ -182,7 +180,7 @@ PROGRAM tree_omp
     print*
     print '(A)', "  ===================================================="
     
-    ! Centramos el título del modo manualmente
+    ! Title
     print '(A)', "          ANALYSIS OF EXECUTION - Mode: OpenMP"
     
     !$ nt = omp_get_max_threads()
@@ -192,13 +190,12 @@ PROGRAM tree_omp
     print '(A, F10.3, A)', "   Total execution time: ", t_total, " s"
     print '(A)', "  ----------------------------------------------------"
     
-    ! Desglose de las fases
+    ! Breakdown of the phases
     print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:     ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
     print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:      ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
     print '(A, F10.3, A, F5.1, A)', "   - Integration and output:    ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
     print '(A)', "  ____________________________________________________"
     
-    ! Mantenemos solo el Throughput como dato de interés científico
     if (t_total > 0) then
         print '(A, F12.2, A)', "   Throughput: ", (n / t_total), " particles/s"
     end if
@@ -212,9 +209,9 @@ PROGRAM tree_omp
     !! Calculate_Ranges !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Calcula los rangos de las partıculas en la
-    !! matriz r en las 3 dimensiones y lo pone en la
-    !! variable apuntada por goal
+    !! Calculates the ranges of the particles in the 
+    !! matrix p in the 3 dimensions and stores it in the 
+    !! variable pointed to by goal
     !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         SUBROUTINE Calculate_Ranges(goal)
@@ -229,8 +226,8 @@ PROGRAM tree_omp
             maxs%x = MAXVAL([p(:)%p%x])
             maxs%y = MAXVAL([p(:)%p%y])
             maxs%z = MAXVAL([p(:)%p%z])
-            ! Al calcular span le sumo un 10% para que las
-            ! particulas no caigan justo en el borde
+            ! When calculating span, I add 10% so that the 
+            ! particles do not fall exactly on the boundary
             span = MAX(maxs%x - mins%x, MAX(maxs%y - mins%y, maxs%z - mins%z)) * 1.1_dp
 
 
@@ -246,19 +243,20 @@ PROGRAM tree_omp
     !! Find_Cell !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Encuentra la celda donde colocaremos la particula.
-    !! Si la celda que estamos considerando no tiene
-    !! particula o tiene una particula, es esta celda donde
-    !! colocaremos la particula.
-    !! Si la celda que estamos considerando es un "conglomerado",
-    !! buscamos con la funcion BELONGS a que subcelda de las 8
-    !! posibles pertenece y con esta subcelda llamamos de nuevo
-    !! a Find_Cell
+    !! Finds the cell where we will place the particle. 
+    !! If the cell we are considering has no 
+    !! particle or has one particle, it is this cell where 
+    !! we will place the particle. 
+    !! If the cell we are considering is a "conglomerate", 
+    !! we use the BELONGS function to find which of the 8 
+    !! possible subcells it belongs to and call Find_Cell 
+    !! again with this subcell. 
+    !! 
+    !! NOTE: When a "conglomerate" cell is created, all 
+    !! 8 subcells are created, so we can assume they always 
+    !! exist. Empty cells are deleted at the very end, once 
+    !! the entire tree has already been created.
     !!
-    !! NOTA: Cuando se crea una celda "conglomerado" se crean las
-    !! 8 subceldas, por lo que podemos asumir que siempre existen
-    !! las 8. Las celdas vacıas se borran al final del todo, cuando
-    !! todo el arbol ha sido ya creado.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Find_Cell(root,goal,part)
         TYPE(CELL), POINTER :: root, goal, temp
@@ -282,17 +280,17 @@ PROGRAM tree_omp
             goal => root
         END SELECT
     END SUBROUTINE Find_Cell
+
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !! Place_Cell !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Se ejecuta tras Find_Cell, en la celda que
-    !! esa funcion nos devuelve, por lo que siempre
-    !! es una celda de tipo 0 (sin particula) o de tipo 1
-    !! (con una particula). En el caso de que es una celda
-    !! de tipo 1 habra que subdividir la celda y poner en
-    !! su lugar las dos particulas (la que originalmente
-    !! estaba, y la nueva).
+    !! Executed after Find_Cell, in the cell that 
+    !! function returns, so it is always a cell of 
+    !! type 0 (no particle) or type 1 (with one particle). 
+    !! If it is a type 1 cell, the cell must be subdivided 
+    !! and the two particles (the original and the new one) 
+    !! placed in its stead.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Place_Cell(goal,part,n)
         TYPE(CELL), POINTER :: goal, temp
@@ -305,7 +303,7 @@ PROGRAM tree_omp
             goal%part = part
             goal%pos = n
         CASE (1)
-            ! Si las partículas están virtualmente en el mismo sitio, no subdividas más
+            ! If particles are virtually in the same spot, do not subdivide further
             IF (ABS(goal%part%x - part%x) < epsilon .AND. &
                 ABS(goal%part%y - part%y) < epsilon .AND. &
                 ABS(goal%part%z - part%z) < epsilon) THEN
@@ -324,16 +322,15 @@ PROGRAM tree_omp
     !! Crear_Subcells !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Esta funcion se llama desde Place_Cell y
-    !! solo se llama cuando ya hay una particula
-    !! en la celda, con lo que la tenemos que
-    !! subdividir. Lo que hace es crear 8 subceldas
-    !! que "cuelgan" de goal y la particula que
-    !! estaba en goal la pone en la subcelda que
-    !! corresponda de la 8 nuevas creadas.
-    !!
-    !! Para crear las subceldas utilizar las funciones
-    !! CALCULAR_RANGE, BELONGS y NULLIFY_POINTERS
+    !! This function is called from Place_Cell and 
+    !! is only called when there is already a particle 
+    !! in the cell, thus requiring subdivision. It creates 
+    !! 8 subcells that "hang" from goal and places the 
+    !! particle that was in goal into the corresponding 
+    !! subcell among the 8 new ones created. 
+    !! 
+    !! To create the subcells, use the functions 
+    !! CALCULAR_RANGE, BELONGS, and NULLIFY_POINTERS
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Crear_Subcells(goal)
         TYPE(CELL), POINTER :: goal
@@ -369,11 +366,10 @@ PROGRAM tree_omp
     !! Nullify_Pointers !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Simplemente me NULLIFYca los punteros de
-    !! las 8 subceldas de la celda "goal"
-    !!
-    !! Se utiliza en el bucle principal y por
-    !! CREAR_SUBCELLS
+    !! Simply nullifies the pointers of the 8 
+    !! subcells of the "goal" cell. 
+    !! 
+    !! Used in the main loop and by CREAR_SUBCELLS
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Nullify_Pointers(goal)
         TYPE(CELL), POINTER :: goal
@@ -391,10 +387,10 @@ PROGRAM tree_omp
     !! Belongs !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Devuelve TRUE si la particula "part" esta
-    !! dentro del rango de la celda "goal"
-    !!
-    !! Utilizada por FIND_CELL
+    !! Returns TRUE if the particle "part" is 
+    !! within the range of the cell "goal" 
+    !! 
+    !! Used by FIND_CELL
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     FUNCTION Belongs(part,goal)
         TYPE(point3d), INTENT(IN) :: part
@@ -414,10 +410,10 @@ PROGRAM tree_omp
     !! Calcular_Range !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Dado un octante "otctant" (1,1,1, 1,1,2 ... 2,2,2),
-    !! calcula sus rangos en base a los rangos de
-    !! "goal". Si "what" = 0 calcula los minimos. Si what=1
-    !! calcula los maximos.
+    !! Given an octant "octant" (1,1,1, 1,1,2 ... 2,2,2), 
+    !! calculates its ranges based on the ranges of "goal". 
+    !! If "what" = 0, calculates minimums. If what = 1, 
+    !! calculates maximums.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     FUNCTION Calcular_Range(what,goal,octant)
         INTEGER, INTENT(IN) :: what
@@ -447,9 +443,9 @@ PROGRAM tree_omp
     !! Borrar_empty_leaves !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Se llama una vez completado el arbol para
-    !! borrar (DEALLOCATE) las celdas vacıas (i.e.
-    !! sin partıcula).
+    !! Called once the tree is complete to delete 
+    !! (DEALLOCATE) empty cells (i.e., those without 
+    !! a particle).
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Borrar_empty_leaves(goal)
         TYPE(CELL),POINTER :: goal
@@ -473,11 +469,10 @@ PROGRAM tree_omp
     !! Borrar_tree !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Borra el arbol completo, excepto la "head".
-    !!
-    !! El arbol se ha de regenerar continuamente,
-    !! por lo que tenemos que borrar el antiguo
-    !! para evitar "memory leaks".
+    !! Deletes the entire tree except for the "head". 
+    !! 
+    !! The tree must be continuously regenerated, 
+    !! so we must delete the old one to avoid memory leaks.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Borrar_tree(goal)
         TYPE(CELL),POINTER :: goal
@@ -499,8 +494,8 @@ PROGRAM tree_omp
     !! Calculate_masses !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Nos calcula para todas las celdas que cuelgan
-    !! de "goal" su masa y su center-of-mass.
+    !! Calculates the mass and center-of-mass for all 
+    !! cells hanging from "goal".
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Calculate_masses(goal)
         TYPE(CELL), POINTER :: goal
@@ -537,9 +532,9 @@ PROGRAM tree_omp
     !! Calculate_forces !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Calcula las fuerzas de todas las particulas contra "head".
-    !! Se sirve de la funcion Calculate_forces_aux que es la
-    !! que en realidad hace los calculos para cada particula
+    !! Calculates the forces of all particles against "head". 
+    !! Uses the function Calculate_forces_aux which 
+    !! actually performs the calculations for each particle.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     SUBROUTINE Calculate_forces(head)
         TYPE(CELL), POINTER :: head
@@ -558,20 +553,19 @@ PROGRAM tree_omp
     !! Calculate_forces_aux !!
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     !!
-    !! Dada una particula "goal" calcula las fuerzas
-    !! sobre ella de la celda "tree". Si "tree" es una
-    !! celda que contiene una sola particula el caso
-    !! es sencillo, pues se tratan de dos particulas.
-    !!
-    !! Si "tree" es una celda conglomerado, hay que ver primero
-    !! si l/D < theta. Es decir si el lado de la celda (l)
-    !! dividido entre la distancia de la particula goal
-    !! al center_of_mass de la celda tree (D) es menor que theta.
-    !! En caso de que asi sea, tratamos a la celda como una
-    !! sola particula. En caso de que no se menor que theta,
-    !! entonces tenemos que considerar todas las subceldas
-    !! de tree y para cada una de ellas llamar recursivamente
-    !! a Calculate_forces_aux
+    !! Given a particle "goal_particle", calculates the forces 
+    !! exerted on it by the cell "tree". If "tree" is a 
+    !! cell containing a single particle, the case is simple, 
+    !! as they are treated as two particles. 
+    !! 
+    !! If "tree" is a conglomerate cell, we first check 
+    !! if l/D < theta. That is, if the cell side (l) 
+    !! divided by the distance from the goal particle to 
+    !! the center_of_mass of the tree cell (D) is less than theta. 
+    !! If so, we treat the cell as a single particle. 
+    !! If it is not less than theta, then we must consider 
+    !! all subcells of tree and recursively call 
+    !! Calculate_forces_aux for each of them.
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     RECURSIVE SUBROUTINE Calculate_forces_aux(goal_particle, goal_accel, tree)
         TYPE(particle3d), INTENT(IN) :: goal_particle
@@ -583,7 +577,7 @@ PROGRAM tree_omp
 
         SELECT CASE(tree%type)
         CASE(1)
-            ! Verificamos que no sea la misma partícula por posición
+            ! Verify that it is not the same particle by position
             IF (ABS(goal_particle%p%x - tree%c_o_m%x) > 1.e-10_dp .OR. &
                 ABS(goal_particle%p%y - tree%c_o_m%y) > 1.e-10_dp .OR. &
                 ABS(goal_particle%p%z - tree%c_o_m%z) > 1.e-10_dp) THEN
@@ -591,7 +585,7 @@ PROGRAM tree_omp
                 rji = tree%c_o_m - goal_particle%p
                 r2 = rji%x**2 + rji%y**2 + rji%z**2 + epsilon**2
                 r3 = r2 * SQRT(r2)
-                ! AHORA SUMA A LA ACELERACIÓN
+                ! NOW, WE SUM THE ACCELERATION
                 goal_accel%x = goal_accel%x + (tree%mass * rji%x) / r3
                 goal_accel%y = goal_accel%y + (tree%mass * rji%y) / r3
                 goal_accel%z = goal_accel%z + (tree%mass * rji%z) / r3

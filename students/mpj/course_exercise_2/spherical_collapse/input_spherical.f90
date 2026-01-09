@@ -9,15 +9,15 @@ PROGRAM generador_colapso
     REAL(dp) :: mass, rx, ry, rz, radio_sq, r_min, r_max
     REAL(dp) :: dt, dt_out, t_end
 
-    ! --- Parámetros de la simulación ---
-    dt = 0.002_dp       ! Paso de tiempo (más pequeño para el colapso)
-    dt_out = 1.0_dp     ! Frecuencia de salida
-    t_end = 5.0_dp      ! Tiempo total
-    n = 50000           ! Número de partículas
-    mass = 1.0_dp       ! Masa total del sistema (cada partícula será 1/N)
+    ! --- Parameters of simulation ---
+    dt = 0.002_dp       ! Time step
+    dt_out = 1.0_dp     ! Output frequency
+    t_end = 5.0_dp      ! Total time
+    n = 50000           ! Number of particles
+    mass = 1.0_dp       ! Total mass of the system
     
-    r_min = 0.5_dp      ! Radio interno (hueco)
-    r_max = 1.0_dp      ! Radio externo
+    r_min = 0.5_dp      ! Internal radius
+    r_max = 1.0_dp      ! External radius
     ! -----------------------------------
 
     CALL date_and_time(values=values)
@@ -35,22 +35,22 @@ PROGRAM generador_colapso
 
     DO i = 1, n
         DO
-            ! Generar coordenadas entre -r_max y r_max
+            ! Generating coordinates between -r_max and r_max
             CALL random_number(rx); rx = (rx * 2.0_dp - 1.0_dp) * r_max
             CALL random_number(ry); ry = (ry * 2.0_dp - 1.0_dp) * r_max
             CALL random_number(rz); rz = (rz * 2.0_dp - 1.0_dp) * r_max
             
             radio_sq = rx**2 + ry**2 + rz**2
             
-            ! Solo aceptamos la partícula si está dentro de la corteza (r_min < r < r_max)
+            ! The particle is only accepted if it is inside the spherical shell (r_min < r < r_max)
             IF (radio_sq <= r_max**2 .AND. radio_sq >= r_min**2) EXIT
         END DO
 
-        ! Formato: Masa, Pos(x,y,z), Vel(x,y,z)
+        ! Format: Mass, Pos(x,y,z), Vel(x,y,z)
         WRITE(10,'(F12.8, 3F12.8, 3F12.8)') mass/n, rx, ry, rz, 0.0_dp, 0.0_dp, 0.0_dp
     END DO
 
     CLOSE(10)
-    PRINT*, "Archivo input.txt generado con éxito para colapso esférico."
+    PRINT*, "File input.txt generated succesfully for the spherical collapse."
 
 END PROGRAM generador_colapso

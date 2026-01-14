@@ -228,7 +228,7 @@ CONTAINS
         mins%x = MINVAL(p%p%x); mins%y = MINVAL(p%p%y); mins%z = MINVAL(p%p%z)
         maxs%x = MAXVAL(p%p%x); maxs%y = MAXVAL(p%p%y); maxs%z = MAXVAL(p%p%z)
         span = MAX(maxs%x-mins%x, MAX(maxs%y-mins%y, maxs%z-mins%z)) * 1.1_dp
-        medios%x = (mins%x+maxs%x)/2.0; medios%y = (mins%y+maxs%y)/2.0; medios%z = (mins%z+maxs%z)/2.0
+        medios%x = (mins%x+maxs%x)/2.0_dp; medios%y = (mins%y+maxs%y)/2.0_dp; medios%z = (mins%z+maxs%z)/2.0_dp
         goal%range%min = medios - vector3d(span/2, span/2, span/2)
         goal%range%max = medios + vector3d(span/2, span/2, span/2)
     END SUBROUTINE
@@ -297,9 +297,9 @@ CONTAINS
         TYPE(CELL), POINTER :: goal
         INTEGER, DIMENSION(3), INTENT(IN) :: octant
         TYPE(point3d) :: Calcular_Range, mid
-        mid%x = (goal%range%min%x + goal%range%max%x)/2.0
-        mid%y = (goal%range%min%y + goal%range%max%y)/2.0
-        mid%z = (goal%range%min%z + goal%range%max%z)/2.0
+        mid%x = (goal%range%min%x + goal%range%max%x)/2.0_dp
+        mid%y = (goal%range%min%y + goal%range%max%y)/2.0_dp
+        mid%z = (goal%range%min%z + goal%range%max%z)/2.0_dp
         IF (what == 0) THEN
             Calcular_Range%x = MERGE(goal%range%min%x, mid%x, octant(1)==1)
             Calcular_Range%y = MERGE(goal%range%min%y, mid%y, octant(2)==1)

@@ -24,6 +24,8 @@ The project is organized into specific directories for different physical scenar
 - `tree_MPI.f90`: Parallel implementation using MPI for distributed-memory systems.
 - `input_rotation.f90`: Program to generate the initial galactic disk rotation conditions. It creates a file called `input_rotation.dat`, which will be the input for the integration scripts.
 
+- `Original.f90`: This is the original code for the Barnes–Hut algorithm, without any modifications I have made.
+
 - `animation.py`: Python script for 3D visualization of the results, giving a gif.
 - `Makefile`: Automates compilation and execution. It generates one executable and output file per execution mode, producing the corresponding output files:
   - `output.dat`
@@ -190,6 +192,118 @@ As an example, the following results correspond to a galactic rotation simulatio
   ====================================================
 
 
+Now, let us see what happens when we increase the number of particles in the simulation and 
+The rest of parameters remain the same:
+
+- Number of particles: `n = 10000`
+- Time step: `dt = 0.01`
+- Output interval: `dt_out = 0.1`
+- Final simulation time: `t_end = 30.0`
+
+--- Running SERIAL VERSION ---
+
+  ====================================================
+            ANALYSIS OF EXECUTION - Mode: Serial
+             Resource usage: 1 Core (Single)
+  ====================================================
+   Total execution time:       221.308 s
+  ----------------------------------------------------
+   - Octree reconstruction:      35.489 s  ( 16.0%)
+   - Gravity calculations:      169.352 s  ( 76.5%)
+   - Integration and output:     16.466 s  (  7.4%)
+  ____________________________________________________
+   Throughput:       225.93 particles/s
+  ====================================================
+
+
+--- Running OPENMP ---
+
+  ====================================================
+          ANALYSIS OF EXECUTION - Mode: OpenMP
+           Processing threads active:  8
+  ====================================================
+   Total execution time:    139.866 s
+  ----------------------------------------------------
+   - Octree reconstruction:         43.621 s  ( 31.2%)
+   - Gravity calculations:          78.163 s  ( 55.9%)
+   - Integration and output:        18.082 s  ( 12.9%)
+  ____________________________________________________
+   Throughput:       357.49 particles/s
+  ====================================================
+
+
+--- Running MPI ---
+
+  ====================================================
+            ANALYSIS OF EXECUTION - Mode: MPI
+             Active MPI processes:      4
+  ====================================================
+   Total execution time:       209.713 s
+  ----------------------------------------------------
+   - Octree reconstruction:      66.249 s  ( 31.6%)
+   - Gravity calculations:      120.040 s  ( 57.2%)
+   - Integration and output:     23.425 s  ( 11.2%)
+  ____________________________________________________
+   Throughput:       238.42 particles/s
+  ====================================================
+
+
+
+
+- Number of particles: `n = 100000`
+- Time step: `dt = 0.01`
+- Output interval: `dt_out = 0.1`
+- Final simulation time: `t_end = 30.0`
+
+
+--- Running SERIAL VERSION ---
+
+  ====================================================
+            ANALYSIS OF EXECUTION - Mode: Serial
+             Resource usage: 1 Core (Single)
+  ====================================================
+   Total execution time:       487.899 s
+  ----------------------------------------------------
+   - Octree reconstruction:      73.965 s  ( 15.2%)
+   - Gravity calculations:      380.160 s  ( 77.9%)
+   - Integration and output:     33.774 s  (  6.9%)
+  ____________________________________________________
+   Throughput:       204.96 particles/s
+  ====================================================
+
+
+--- Running OPENMP ---
+
+  ====================================================
+          ANALYSIS OF EXECUTION - Mode: OpenMP
+           Processing threads active:  8
+  ====================================================
+   Total execution time:    293.211 s
+  ----------------------------------------------------
+   - Octree reconstruction:         87.306 s  ( 29.8%)
+   - Gravity calculations:         170.036 s  ( 58.0%)
+   - Integration and output:        35.869 s  ( 12.2%)
+  ____________________________________________________
+   Throughput:       341.05 particles/s
+  ====================================================
+
+
+  --- Running MPI ---
+
+  ====================================================
+             ANALYSIS OF EXECUTION - Mode: MPI      
+              Active MPI processes:      4   
+  ====================================================
+     Total execution time:       448.312 s   
+  ----------------------------------------------------    
+   - Octree reconstruction:     142.563 s  ( 31.8%)   
+   - Gravity calculations:      260.104 s  ( 58.0%)    
+   - Integration and output:     45.645 s  ( 10.2%)   
+  ____________________________________________________    
+   Throughput:       223.06 particles/s  
+  ====================================================
+
+
 # Discussion of the results
 
 1. Gravity Calculations
@@ -203,3 +317,13 @@ OpenMP achieves the best overall time due to the low latency of shared memory. M
 
 4. Efficiency and Scalability
 Despite using 8 threads for OpenMP and 4 processes for MPI, the speedup is not linear. The Barnes-Hut algorithm has a complexity of $O(N \log N)$. According to Amdahl's Law, the sequential nature of the tree construction acts as a bottleneck; no matter how much we accelerate the gravity calculations, the total gain is limited by the non-parallelized sections of the code.
+
+In the test involving a larger number of particles (50k to 100k), we observed that the time percentages for each phase of the algorithm remain virtually unchanged. Furthermore, the expected scaling law is satisfied. When increasing the number of particles from 50,000 to 100,000, the theoretical time increase factor is:$$\frac{100,000 \cdot \log(100,000)}{50,000 \cdot \log(50,000)} \approx 2.12 .$$ Comparing the three approaches (Serial, OpenMP, and MPI), our experimental results align perfectly with this factor.
+
+
+
+# SUMMARY ABOUT RESULTS
+
+Crucially, analyzing the execution breakdown reveals the distinct impact of parallelization. In the serial version, gravity calculations dominate (~77% of runtime). However, in the OpenMP and MPI versions, the relative weight of the Octree reconstruction increases significantly (jumping from ~16% to over 30%). This confirms that while the $N^2$-like force calculation is highly parallelizable, the tree structure management incurs significant overhead (synchronization in OpenMP and communication in MPI), preventing linear scaling. Besides, we have checked that the time scaling with the number of particles in this algorithm goes with $O(N \log N)$.
+
+Attempts to parallelize the tree construction were discarded due to its recursive nature. The need for complex synchronization to manage the dynamic node creation introduced excessive overhead that degraded performance. Thus, despite the idle threads and cache penalties increasing the construction time in parallel modes, keeping this phase serial proved more robust than a poorly scaling parallel implementation.

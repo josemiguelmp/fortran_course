@@ -13,7 +13,7 @@ PROGRAM galaxia_bh
   dt = 0.01_dp
   dt_out = 0.1_dp
   t_end = 30.0_dp
-  n = 10000
+  n = 100000
   
   mass_center = 100.0_dp  ! Central object
   mass_disk = 0.001_dp    ! Stars
@@ -55,5 +55,5 @@ PROGRAM galaxia_bh
   END DO
 
   CLOSE(outunit)
-  PRINT*, "input_rotation.dat generado respetando tu orden de lectura."
+  PRINT*, "input_rotation.dat generated."
 END PROGRAM galaxia_bh

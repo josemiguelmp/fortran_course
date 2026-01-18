@@ -95,7 +95,7 @@ PROGRAM tree_mpi
     DO t = 0.0_dp, t_end, dt
         call system_clock(count = c_ini)
 
-        ! Uploading velocities and position
+        ! Uploading velocities and positions
         IF (my_rank == 0) THEN
             DO i = 2, n  ! We skip the 1 (central body)
                 p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)

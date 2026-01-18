@@ -24,7 +24,7 @@ The project is organized into specific directories for different physical scenar
 - `tree_MPI.f90`: Parallel implementation using MPI for distributed-memory systems.
 - `input_rotation.f90`: Program to generate the initial galactic disk rotation conditions. It creates a file called `input_rotation.dat`, which will be the input for the integration scripts.
 
-- `Original.f90`: This is the original code for the Barnes–Hut algorithm, without any modifications I have made.
+- `Original.f90`: This is the original code for the Barnes–Hut algorithm extracted from Angel de Vicente's TAP book, without any modifications I have after made.
 
 - `animation.py`: Python script for 3D visualization of the results, giving a gif.
 - `Makefile`: Automates compilation and execution. It generates one executable and output file per execution mode, producing the corresponding output files:

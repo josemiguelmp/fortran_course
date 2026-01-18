@@ -21,7 +21,7 @@ time = data[:, 0]
 coords = data[:, 1:]
 
 # Calculating number of particles
-# Each particles has coordinates (x, y, z)
+# Each particle has coordinates (x, y, z)
 n_particles = (data.shape[1] - 1) // 3
 positions = data[:, 1:].reshape(len(time), n_particles, 3)
 

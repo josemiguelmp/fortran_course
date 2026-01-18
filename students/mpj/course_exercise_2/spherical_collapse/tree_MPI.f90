@@ -1,4 +1,4 @@
-! Algoritmo Barnes-Hut en Fortran90 paralelizado con MPI
+! Barnes-Hut algorithm in Fortran90 parallelized with MPI
 PROGRAM tree_mpi
     use geometry
     use particle
@@ -17,7 +17,7 @@ PROGRAM tree_mpi
     TYPE(particle3d), DIMENSION(:), ALLOCATABLE :: p
     TYPE(vector3d), DIMENSION(:), ALLOCATABLE :: a
     
-    ! Estructuras del Árbol Barnes-Hut
+    ! Barnes-Hut Tree Structures
     TYPE RANGE
         TYPE(point3d) :: min, max
     END TYPE RANGE
@@ -30,7 +30,7 @@ PROGRAM tree_mpi
         TYPE (RANGE) :: range
         TYPE(point3d) :: part
         INTEGER :: pos
-        INTEGER :: type !! 0 = vacía; 1 = partícula; 2 = conglomerado
+        INTEGER :: type !! 0 = empty; 1 = particle; 2 = conglomerate
         REAL(dp) :: mass
         TYPE(vector3d) :: c_o_m
         TYPE (CPtr), DIMENSION(2,2,2) :: subcell
@@ -48,7 +48,7 @@ PROGRAM tree_mpi
     CALL MPI_COMM_RANK(MPI_COMM_WORLD, my_rank, ierr)
     CALL MPI_COMM_SIZE(MPI_COMM_WORLD, n_procs, ierr)
 
-    ! --- LECTURA DE DATOS (Solo Rank 0) ---
+    ! Reading data
     IF (my_rank == 0) THEN
         READ*, dt
         READ*, dt_out
@@ -56,7 +56,7 @@ PROGRAM tree_mpi
         READ*, n
     END IF
 
-    ! Difundir parámetros básicos a todos los procesos
+    ! Broadcast basic parameters to all processes
     CALL MPI_BCAST(dt, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     CALL MPI_BCAST(dt_out, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     CALL MPI_BCAST(t_end, 1, MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
@@ -71,10 +71,10 @@ PROGRAM tree_mpi
         END DO
     END IF
 
-    ! Sincronización inicial para que todos tengan la misma galaxia
+    ! Initial syncronization
     CALL Sincronizar_Particulas_MPI(p, n)
 
-    ! Reparto de carga en la paralelización
+    ! Load balancing in the parallelization
     i_start = (my_rank * n / n_procs) + 1
     i_end   = ((my_rank + 1) * n / n_procs)
     if (my_rank == n_procs - 1) i_end = n
@@ -95,9 +95,9 @@ PROGRAM tree_mpi
     DO t = 0.0_dp, t_end, dt
         call system_clock(count = c_ini)
 
-        ! Actualización de velocidades y posiciones
+        ! Uploading velocities and positions
         IF (my_rank == 0) THEN
-            DO i = 2, n  ! Saltamos el 1 (Agujero Negro central)
+            DO i = 2, n  ! We skip the 1 (central body)
                 p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
                 p(i)%p = p(i)%p + p(i)%v * dt
             END DO
@@ -105,7 +105,7 @@ PROGRAM tree_mpi
 
         CALL Sincronizar_Particulas_MPI(p, n)
 
-        ! Reconstrucción del Árbol
+        ! Tree reconstruction
         CALL Borrar_tree(head)
         CALL Calculate_ranges(head)
         head%type = 0
@@ -124,13 +124,13 @@ PROGRAM tree_mpi
 
         call system_clock(count=c_ini)
 
-        ! Cálculo de aceleraciones en Paralelo
+        ! Computation of accelerations in parallel
         a = vector3d(0.0_dp, 0.0_dp, 0.0_dp)
         DO i = i_start, i_end
             CALL Calculate_forces_aux(p(i), a(i), head)
         END DO
 
-        ! Vector de aceleraciones completo en todos los procesos
+        ! Full acceleration vector across all processes
         CALL Sincronizar_Aceleraciones_MPI(a, n)
 
         call system_clock(count=c_fin)
@@ -138,7 +138,7 @@ PROGRAM tree_mpi
 
         call system_clock(count=c_ini)
 
-        ! Actualización final de velocidades
+        ! Final velocity update
         IF (my_rank == 0) THEN
             DO i = 1, n
                 p(i)%v = p(i)%v + a(i) * (dt/2.0_dp)
@@ -146,7 +146,7 @@ PROGRAM tree_mpi
             
             t_out = t_out + dt
 
-            ! Escritura de los datos al archivo
+            ! Writing data to output file
             IF (t_out >= dt_out) THEN
                 WRITE(10,'(E15.7,1X)', ADVANCE='NO') t
                 DO i = 1, n
@@ -171,17 +171,15 @@ PROGRAM tree_mpi
         print*
         print '(A)', "  ===================================================="
         
-        ! Título centrado para MPI
+        ! Title
         print '(A)', "            ANALYSIS OF EXECUTION - Mode: MPI"
-        
-        ! Cambiamos threads por MPI processes
         print '(A, I2)', "             Active MPI processes:     ", n_procs
 
         print '(A)', "  ===================================================="
         print '(A, F10.3, A)', "   Total execution time:    ", t_total, " s"
         print '(A)', "  ----------------------------------------------------"
         
-        ! Desglose de las fases
+        ! Breakdown of the phases
         print '(A, F10.3, A, F5.1, A)', "   - Octree reconstruction:  ", t_tree,   " s  (", (t_tree/t_total)*100.0, "%)"
         print '(A, F10.3, A, F5.1, A)', "   - Gravity calculations:   ", t_forces, " s  (", (t_forces/t_total)*100.0, "%)"
         print '(A, F10.3, A, F5.1, A)', "   - Integration and output: ", t_update, " s  (", (t_update/t_total)*100.0, "%)"
@@ -196,13 +194,12 @@ PROGRAM tree_mpi
 
 CONTAINS
 
-    ! --- SUBRUTINAS DE COMUNICACIÓN MPI ---
+    ! --- INCLUDING SUBROUTINES FOR MPI COMMUNICATION ---
 
     SUBROUTINE Sincronizar_Particulas_MPI(p_vec, n_particles)
         TYPE(particle3d), DIMENSION(:) :: p_vec
         INTEGER, INTENT(IN) :: n_particles
         INTEGER :: ierr
-        ! 7 componentes de 8 bytes (masa, 3 pos, 3 vel) = 56 bytes por partícula
         CALL MPI_BCAST(p_vec, n_particles * 56, MPI_BYTE, 0, MPI_COMM_WORLD, ierr)
     END SUBROUTINE
 

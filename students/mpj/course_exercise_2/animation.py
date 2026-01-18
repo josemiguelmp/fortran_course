@@ -6,7 +6,7 @@ from matplotlib.animation import FuncAnimation
 # Parameters
 # ==========================
 filename = "/home/josemiguelmp/fortran_course/students/mpj/course_exercise_2/output_mpi.dat"
-gif_name = "/home/josemiguelmp/fortran_course/students/mpj/course_exercise_2/animations/rotation_mpi.gif"
+gif_name = "/home/josemiguelmp/fortran_course/students/mpj/course_exercise_2/animations/rotation_mpi_2.gif"
 limit = 8       # Camera zoom
 skip = 2        # Drawing one of each two frames
 
@@ -24,6 +24,11 @@ coords = data[:, 1:]
 # Each particles has coordinates (x, y, z)
 n_particles = (data.shape[1] - 1) // 3
 positions = data[:, 1:].reshape(len(time), n_particles, 3)
+
+# Calculating limits of the graphic
+all_coords = positions[:, 1:, :].flatten() # Ignoramos el cuerpo central para el limite
+limit = np.percentile(np.abs(all_coords), 90) * 1.2 # Margen del 20%
+
 
 # ==========================
 # 3D figure
@@ -70,8 +75,6 @@ def update(frame):
 ani = FuncAnimation(fig, update, frames=len(time), init_func=init, 
                     interval=40, blit=False)
 
-print(f"Generating {gif_name} (this may take a while)...")
+print(f"Generating {gif_name.split('/')[-1]} (this may take a while)...")
 ani.save(gif_name, writer="pillow", fps=25, dpi=80)
-print(f"Done! Check the file: {gif_name}")
-
-plt.show()
+print(f"Done! Check the file: {gif_name.split('/')[-1]}")

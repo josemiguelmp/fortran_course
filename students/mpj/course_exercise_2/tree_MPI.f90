@@ -206,7 +206,8 @@ CONTAINS
     SUBROUTINE Sincronizar_Aceleraciones_MPI(a_vec, n_particles)
         TYPE(vector3d), DIMENSION(:) :: a_vec
         INTEGER, INTENT(IN) :: n_particles
-        REAL(dp), DIMENSION(3*n_particles) :: buf_send, buf_recv
+        REAL(dp), ALLOCATABLE :: buf_send(:), buf_recv(:)
+        ALLOCATE(buf_send(3*n_particles), buf_recv(3*n_particles))
         INTEGER :: i, ierr
         DO i = 1, n_particles
             buf_send(3*i-2) = a_vec(i)%x

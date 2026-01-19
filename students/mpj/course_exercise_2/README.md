@@ -327,3 +327,10 @@ In the test involving a larger number of particles (50k to 100k), we observed th
 Crucially, analyzing the execution breakdown reveals the distinct impact of parallelization. In the serial version, gravity calculations dominate (~77% of runtime). However, in the OpenMP and MPI versions, the relative weight of the Octree reconstruction increases significantly (jumping from ~16% to over 30%). This confirms that while the $N^2$-like force calculation is highly parallelizable, the tree structure management incurs significant overhead (synchronization in OpenMP and communication in MPI), preventing linear scaling. Besides, we have checked that the time scaling with the number of particles in this algorithm goes with $O(N \log N)$.
 
 Attempts to parallelize the tree construction were discarded due to its recursive nature. The need for complex synchronization to manage the dynamic node creation introduced excessive overhead that degraded performance. Thus, despite the idle threads and cache penalties increasing the construction time in parallel modes, keeping this phase serial proved more robust than a poorly scaling parallel implementation.
+
+
+## Author
+
+José Miguel Martín Pérez  
+Programming Techniques - Second assigment  
+Universidad de La Laguna (ULL)
